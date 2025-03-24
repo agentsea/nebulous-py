@@ -1,0 +1,12 @@
+[project]
+name = "nebu"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10.14"
+dependencies = [
+    "openai>=1.68.2",
+    "pydantic>=2.10.6",
+    "pyyaml>=6.0.2",
+    "requests>=2.32.3",
+]
