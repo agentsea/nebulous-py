@@ -1,7 +1,7 @@
 [project]
 name = "nebu"
 version = "0.1.0"
-description = "Add your description here"
+description = "A globally distributed container runtime"
 readme = "README.md"
 requires-python = ">=3.10.14"
 dependencies = [
@@ -10,3 +10,15 @@ dependencies = [
     "pyyaml>=6.0.2",
     "requests>=2.32.3",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]
+
+[tool.pyright]
+reportUnknownParameterType = false
+reportMissingTypeArgument = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false

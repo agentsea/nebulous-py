@@ -5,11 +5,14 @@ import requests
 from nebu.config import GlobalConfig  # or wherever your GlobalConfig is defined
 from nebu.containers.models import (
     DEFAULT_RESTART_POLICY,
+    V1AuthzConfig,
     V1Container,
     V1ContainerRequest,
     V1ContainerResources,
+    V1Containers,
     V1EnvVar,
     V1Meter,
+    V1PortRequest,
     V1ResourceMetaRequest,
     V1SSHKey,
     V1VolumePath,
@@ -20,7 +23,7 @@ class Container:
     def __init__(
         self,
         name: str,
-        namespace: Optional[str] = None,
+        namespace: str = "default",
         platform: Optional[str] = None,
         image: str = "",
         env: Optional[List[V1EnvVar]] = None,
@@ -33,12 +36,21 @@ class Container:
         queue: Optional[str] = None,
         timeout: Optional[str] = None,
         ssh_keys: Optional[List[V1SSHKey]] = None,
+        ports: Optional[List[V1PortRequest]] = None,
+        proxy_port: Optional[int] = None,
+        authz: Optional[V1AuthzConfig] = None,
         config: Optional[GlobalConfig] = None,
     ):
         # Fallback to a default config if none is provided
         config = config or GlobalConfig.read()
-        self.api_key = config.api_key
-        self.nebu_host = config.server
+        current_server = config.get_current_server_config()
+        if not current_server:
+            raise ValueError("No current server config found")
+        self.api_key = current_server.api_key
+        self.nebu_host = current_server.server
+
+        # print(f"nebu_host: {self.nebu_host}")
+        # print(f"api_key: {self.api_key}")
 
         # Construct the containers base URL
         self.containers_url = f"{self.nebu_host}/v1/containers"
@@ -55,18 +67,18 @@ class Container:
             namespace=namespace,
         )
 
-        # If you have a "V1ContainersResponse" listing all containers, parse that.
-        # Or if your API allows a GET /v1/containers/{namespace}/{container_name},
-        # adapt this logic accordingly.
-        # Example:
-        # containers = V1ContainersResponse.model_validate(response.json())
-        # existing = next(
-        #    (c for c in containers.containers if c.metadata.name == container_name and c.metadata.namespace == namespace),
-        #    None
-        # )
+        containers = V1Containers.model_validate(response.json())
+        print(f"containers: {containers}")
+        existing = next(
+            (
+                c
+                for c in containers.containers
+                if c.metadata.name == name and c.metadata.namespace == namespace
+            ),
+            None,
+        )
 
-        # For demonstration, let's just say "existing" is None if not found:
-        existing = None  # Replace with real lookup
+        print(f"existing: {existing}")
 
         if not existing:
             # If there's no existing container, create one:
@@ -88,6 +100,9 @@ class Container:
                 queue=queue,
                 timeout=timeout,
                 ssh_keys=ssh_keys,
+                ports=ports,
+                proxy_port=proxy_port,
+                authz=authz,
             )
             create_response = requests.post(
                 self.containers_url,
@@ -114,6 +129,8 @@ class Container:
             updated_restart = restart if restart else existing.restart
             updated_queue = queue if queue else existing.queue
             updated_timeout = timeout if timeout else existing.timeout
+            updated_proxy_port = proxy_port if proxy_port else existing.proxy_port
+            updated_authz = authz if authz else existing.authz
 
             # Determine if fields differ. You can adapt these checks as needed
             # (for example, deep comparison for complex field structures).
@@ -128,6 +145,8 @@ class Container:
                 or existing.restart != updated_restart
                 or existing.queue != updated_queue
                 or existing.timeout != updated_timeout
+                or existing.proxy_port != updated_proxy_port
+                or existing.authz != updated_authz
             )
 
             if not fields_changed:
@@ -171,6 +190,9 @@ class Container:
                 queue=updated_queue,
                 timeout=updated_timeout,
                 ssh_keys=ssh_keys,
+                ports=ports,
+                proxy_port=updated_proxy_port,
+                authz=updated_authz,
             )
             create_response = requests.post(
                 self.containers_url,
@@ -202,3 +224,18 @@ class Container:
     @classmethod
     def from_request(cls, request: V1ContainerRequest) -> V1Container:
         return V1Container(**request.model_dump())
+
+    def delete(self) -> None:
+        """
+        Deletes the container by making a DELETE request to /v1/containers/:namespace/:name.
+        """
+        # Construct the url using instance attributes
+        delete_url = f"{self.containers_url}/{self.namespace}/{self.name}"
+
+        # Perform the deletion
+        response = requests.delete(
+            delete_url,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+        )
+        response.raise_for_status()
+        print(f"Deleted container {self.name} in namespace {self.namespace}")

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from nebu.meta import V1ResourceMeta, V1ResourceMetaRequest
 
 
-# Match Rust "V1ErrorResponse" struct
+# 1) If you're still using V1ErrorResponse, no change needed here.
 class V1ErrorResponse(BaseModel):
     response_type: str = Field(default="ErrorResponse", alias="type")
     request_id: str
@@ -14,24 +14,21 @@ class V1ErrorResponse(BaseModel):
     traceback: Optional[str] = None
 
 
-# Match Rust "V1Meter" struct
 class V1Meter(BaseModel):
     cost: Optional[float] = None
     costp: Optional[float] = None
     currency: str
     unit: str
     metric: str
-    request_json_path: Optional[str] = None
-    response_json_path: Optional[str] = None
+    json_path: Optional[str] = None
 
 
-# Match Rust "V1EnvVar" struct
 class V1EnvVar(BaseModel):
     key: str
-    value: str
+    value: Optional[str] = None
+    secret_name: Optional[str] = None
 
 
-# Match Rust "V1ContainerResources" struct
 class V1ContainerResources(BaseModel):
     min_cpu: Optional[float] = None
     min_memory: Optional[float] = None
@@ -39,27 +36,22 @@ class V1ContainerResources(BaseModel):
     max_memory: Optional[float] = None
 
 
-# Match Rust "V1SSHKey" struct
 class V1SSHKey(BaseModel):
     public_key: Optional[str] = None
     public_key_secret: Optional[str] = None
     copy_local: Optional[bool] = None
 
 
-# Match Rust "RestartPolicy" enum with default ("Never") for now
-# If you need a typed enum, consider using from enum import Enum in Python
 DEFAULT_RESTART_POLICY = "Never"
 
 
-# Match Rust "V1VolumeDriver" enum
 class V1VolumeDriver(str, Enum):
     RCLONE_SYNC = "RCLONE_SYNC"
     RCLONE_BISYNC = "RCLONE_BISYNC"
     RCLONE_MOUNT = "RCLONE_MOUNT"
+    RCLONE_COPY = "RCLONE_COPY"
 
 
-# Match Rust "V1VolumePath" struct
-# "resync" defaults to false, "continuous" defaults to true, "driver" defaults to RCLONE_SYNC
 class V1VolumePath(BaseModel):
     source: str
     dest: str
@@ -68,14 +60,11 @@ class V1VolumePath(BaseModel):
     driver: V1VolumeDriver = V1VolumeDriver.RCLONE_SYNC
 
 
-# Match Rust "V1VolumeConfig" struct
-# If you know your default_cache_dir, replace "cache" with the actual default
 class V1VolumeConfig(BaseModel):
     paths: List[V1VolumePath]
     cache_dir: str = "/nebu/cache"
 
 
-# Match Rust "V1ContainerStatus" struct
 class V1ContainerStatus(BaseModel):
     status: Optional[str] = None
     message: Optional[str] = None
@@ -84,27 +73,57 @@ class V1ContainerStatus(BaseModel):
     cost_per_hr: Optional[float] = None
 
 
-# pub struct V1PortRequest {
-#     pub port: u16,
-#     pub protocol: Option<String>,
-#     pub public: Option<bool>,
-# }
+class V1AuthzSecretRef(BaseModel):
+    name: Optional[str] = None
+    key: Optional[str] = None
+
+
+class V1AuthzJwt(BaseModel):
+    secret_ref: Optional[V1AuthzSecretRef] = None
+
+
+class V1AuthzPathMatch(BaseModel):
+    path: Optional[str] = None
+    pattern: Optional[str] = None
+
+
+class V1AuthzFieldMatch(BaseModel):
+    json_path: Optional[str] = None
+    pattern: Optional[str] = None
+
+
+class V1AuthzRuleMatch(BaseModel):
+    roles: Optional[List[str]] = None
+
+
+class V1AuthzRule(BaseModel):
+    name: str
+    rule_match: Optional[V1AuthzRuleMatch] = Field(default=None, alias="match")
+    allow: bool
+    field_match: Optional[List[V1AuthzFieldMatch]] = None
+    path_match: Optional[List[V1AuthzPathMatch]] = None
+
+
+class V1AuthzConfig(BaseModel):
+    enabled: bool = False
+    default_action: str = "deny"
+    auth_type: str = "jwt"
+    jwt: Optional[V1AuthzJwt] = None
+    rules: Optional[List[V1AuthzRule]] = None
 
 
 class V1PortRequest(BaseModel):
     port: int
     protocol: Optional[str] = None
-    public: bool = False
+    public: Optional[bool] = None
 
 
 class V1Port(BaseModel):
     port: int
     protocol: Optional[str] = None
-    public: bool = False
+    public_ip: Optional[str] = None
 
 
-# Match Rust "V1ContainerRequest" struct
-# "kind" defaults to "Container", "restart" defaults to "Never"
 class V1ContainerRequest(BaseModel):
     kind: str = Field(default="Container")
     platform: Optional[str] = None
@@ -121,10 +140,10 @@ class V1ContainerRequest(BaseModel):
     timeout: Optional[str] = None
     ssh_keys: Optional[List[V1SSHKey]] = None
     ports: Optional[List[V1PortRequest]] = None
-    public_ip: Optional[bool] = None
+    proxy_port: Optional[int] = None
+    authz: Optional[V1AuthzConfig] = None
 
 
-# Match Rust "V1Container" struct
 class V1Container(BaseModel):
     kind: str = Field(default="Container")
     platform: str
@@ -141,11 +160,11 @@ class V1Container(BaseModel):
     resources: Optional[V1ContainerResources] = None
     status: Optional[V1ContainerStatus] = None
     ssh_keys: Optional[List[V1SSHKey]] = None
-    public_ip: bool = False
     ports: Optional[List[V1Port]] = None
+    proxy_port: Optional[int] = None
+    authz: Optional[V1AuthzConfig] = None
 
 
-# Match Rust "V1UpdateContainer" struct
 class V1UpdateContainer(BaseModel):
     image: Optional[str] = None
     env: Optional[List[V1EnvVar]] = None
@@ -161,3 +180,8 @@ class V1UpdateContainer(BaseModel):
     queue: Optional[str] = None
     timeout: Optional[str] = None
     resources: Optional[V1ContainerResources] = None
+    proxy_port: Optional[int] = None
+
+
+class V1Containers(BaseModel):
+    containers: List[V1Container]
