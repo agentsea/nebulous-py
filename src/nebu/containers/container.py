@@ -220,6 +220,7 @@ class Container:
         self.queue = queue
         self.timeout = timeout
         self.ssh_keys = ssh_keys
+        self.status = self.container.status
 
     @classmethod
     def from_request(cls, request: V1ContainerRequest) -> V1Container:

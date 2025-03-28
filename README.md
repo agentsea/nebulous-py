@@ -9,6 +9,8 @@ pip install nebu
 
 ## Usage
 
+Create a pytorch container on runpod with 1 A100 GPU
+
 ```python
 from nebu import Container, V1EnvVar, V1ResourceMeta
 
@@ -32,6 +34,17 @@ while container.status.status.lower() != "running":
 print(f"Container '{container.metadata.name}' is running")
 
 print(f"You can access the container at {container.status.tailnet_url}")
+```
+
+Run a python function in the container [in progress]
+
+```python
+@container(image="python:3.10-slim", accelerators=["1:A100_SXM"])
+def my_function(x: int, y: int) -> int:
+    return x + y
+
+result = my_function(1, 2)
+print(result)
 ```
 
 ## Contributing

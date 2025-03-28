@@ -69,7 +69,7 @@ class V1ContainerStatus(BaseModel):
     status: Optional[str] = None
     message: Optional[str] = None
     accelerator: Optional[str] = None
-    public_ip: Optional[str] = None
+    tailnet_url: Optional[str] = None
     cost_per_hr: Optional[float] = None
 
 
