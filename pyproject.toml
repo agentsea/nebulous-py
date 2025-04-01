@@ -1,6 +1,6 @@
 [project]
 name = "nebu"
-version = "0.1.1"
+version = "0.1.2"
 description = "A globally distributed container runtime"
 readme = "README.md"
 requires-python = ">=3.10.14"
@@ -13,6 +13,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "ipykernel>=6.29.5",
     "pytest>=8.3.5",
 ]
 

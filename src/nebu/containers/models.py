@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from nebu.meta import V1ResourceMeta, V1ResourceMetaRequest
 
@@ -59,10 +59,14 @@ class V1VolumePath(BaseModel):
     continuous: bool = False
     driver: V1VolumeDriver = V1VolumeDriver.RCLONE_SYNC
 
+    model_config = ConfigDict(use_enum_values=True)
+
 
 class V1VolumeConfig(BaseModel):
     paths: List[V1VolumePath]
     cache_dir: str = "/nebu/cache"
+
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class V1ContainerStatus(BaseModel):
@@ -143,6 +147,8 @@ class V1ContainerRequest(BaseModel):
     proxy_port: Optional[int] = None
     authz: Optional[V1AuthzConfig] = None
 
+    model_config = ConfigDict(use_enum_values=True)
+
 
 class V1Container(BaseModel):
     kind: str = Field(default="Container")
@@ -164,6 +170,8 @@ class V1Container(BaseModel):
     proxy_port: Optional[int] = None
     authz: Optional[V1AuthzConfig] = None
 
+    model_config = ConfigDict(use_enum_values=True)
+
 
 class V1UpdateContainer(BaseModel):
     image: Optional[str] = None
@@ -182,6 +190,10 @@ class V1UpdateContainer(BaseModel):
     resources: Optional[V1ContainerResources] = None
     proxy_port: Optional[int] = None
 
+    model_config = ConfigDict(use_enum_values=True)
+
 
 class V1Containers(BaseModel):
     containers: List[V1Container]
+
+    model_config = ConfigDict(use_enum_values=True)

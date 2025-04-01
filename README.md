@@ -1,5 +1,6 @@
 # nebulous-py
-A python library for the [Nebulous runtime](https://github.com/agentsea/nebulous)
+
+A declarative python library for the [Nebulous runtime](https://github.com/agentsea/nebulous)
 
 ## Installation
 
@@ -12,13 +13,11 @@ pip install nebu
 Create a pytorch container on runpod with 1 A100 GPU
 
 ```python
-from nebu import Container, V1EnvVar, V1ResourceMeta
+from nebu import Container, V1EnvVar
 
 container = Container(
-    metadata=V1ResourceMeta(
-        name="pytorch-example",
-        namespace="test",
-    ),
+    name="pytorch-example",
+    namespace="test",
     image="pytorch/pytorch:latest",
     platform="runpod",
     env=[V1EnvVar(name="MY_ENV_VAR", value="my-value")],
@@ -36,9 +35,13 @@ print(f"Container '{container.metadata.name}' is running")
 print(f"You can access the container at {container.status.tailnet_url}")
 ```
 
-Run a python function in the container [in progress]
+### Decorator
+
+Run a python function in a container [in progress]
 
 ```python
+from nebu import container
+
 @container(image="python:3.10-slim", accelerators=["1:A100_SXM"])
 def my_function(x: int, y: int) -> int:
     return x + y
