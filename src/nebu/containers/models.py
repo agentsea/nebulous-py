@@ -116,6 +116,16 @@ class V1AuthzConfig(BaseModel):
     rules: Optional[List[V1AuthzRule]] = None
 
 
+class V1ContainerHealthCheck(BaseModel):
+    interval: Optional[str] = None
+    timeout: Optional[str] = None
+    retries: Optional[int] = None
+    start_period: Optional[str] = None
+    path: Optional[str] = None
+    port: Optional[int] = None
+    protocol: Optional[str] = None
+
+
 class V1PortRequest(BaseModel):
     port: int
     protocol: Optional[str] = None
@@ -146,6 +156,7 @@ class V1ContainerRequest(BaseModel):
     ports: Optional[List[V1PortRequest]] = None
     proxy_port: Optional[int] = None
     authz: Optional[V1AuthzConfig] = None
+    health_check: Optional[V1ContainerHealthCheck] = None
 
     model_config = ConfigDict(use_enum_values=True)
 
@@ -169,6 +180,7 @@ class V1Container(BaseModel):
     ports: Optional[List[V1Port]] = None
     proxy_port: Optional[int] = None
     authz: Optional[V1AuthzConfig] = None
+    health_check: Optional[V1ContainerHealthCheck] = None
 
     model_config = ConfigDict(use_enum_values=True)
 
@@ -189,6 +201,9 @@ class V1UpdateContainer(BaseModel):
     timeout: Optional[str] = None
     resources: Optional[V1ContainerResources] = None
     proxy_port: Optional[int] = None
+    authz: Optional[V1AuthzConfig] = None
+    health_check: Optional[V1ContainerHealthCheck] = None
+    no_delete: Optional[bool] = None
 
     model_config = ConfigDict(use_enum_values=True)
 
