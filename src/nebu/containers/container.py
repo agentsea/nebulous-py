@@ -10,6 +10,7 @@ from nebu.containers.models import (
     V1ContainerRequest,
     V1ContainerResources,
     V1Containers,
+    V1ContainerSearch,
     V1EnvVar,
     V1Meter,
     V1PortRequest,
@@ -23,9 +24,9 @@ class Container:
     def __init__(
         self,
         name: str,
+        image: str,
         namespace: str = "default",
         platform: Optional[str] = None,
-        image: str = "",
         env: Optional[List[V1EnvVar]] = None,
         command: Optional[str] = None,
         volumes: Optional[List[V1VolumePath]] = None,
@@ -48,6 +49,7 @@ class Container:
             raise ValueError("No current server config found")
         self.api_key = current_server.api_key
         self.nebu_host = current_server.server
+        self.config = config
 
         # print(f"nebu_host: {self.nebu_host}")
         # print(f"api_key: {self.api_key}")
@@ -240,3 +242,123 @@ class Container:
         )
         response.raise_for_status()
         print(f"Deleted container {self.name} in namespace {self.namespace}")
+
+    @classmethod
+    def get(
+        cls,
+        name: Optional[str] = None,
+        namespace: Optional[str] = None,
+        config: Optional[GlobalConfig] = None,
+    ) -> List[V1Container]:
+        """
+        Get a list of containers that match the optional name and/or namespace filters.
+        """
+        config = config or GlobalConfig.read()
+        current_server = config.get_current_server_config()
+        if not current_server:
+            raise ValueError("No current server config found")
+        api_key = current_server.api_key
+        nebu_host = current_server.server
+
+        containers_url = f"{nebu_host}/v1/containers"
+
+        response = requests.get(
+            containers_url, headers={"Authorization": f"Bearer {api_key}"}
+        )
+        response.raise_for_status()
+
+        containers_response = V1Containers.model_validate(response.json())
+        filtered_containers = containers_response.containers
+
+        if name:
+            filtered_containers = [
+                container
+                for container in filtered_containers
+                if container.metadata.name == name
+            ]
+        if namespace:
+            filtered_containers = [
+                container
+                for container in filtered_containers
+                if container.metadata.namespace == namespace
+            ]
+
+        return filtered_containers
+
+    @classmethod
+    def load(
+        cls,
+        name: str,
+        namespace: str = "default",
+        config: Optional[GlobalConfig] = None,
+    ):
+        """
+        Get a container from the remote server.
+        """
+        containers = cls.get(namespace=namespace, name=name, config=config)
+        if not containers:
+            raise ValueError("Container not found")
+        container_v1 = containers[0]
+
+        out = cls.__new__(cls)
+        out.container = container_v1
+        out.config = config or GlobalConfig.read()
+        current_server = out.config.get_current_server_config()
+        if not current_server:
+            raise ValueError("No current server config found")
+        out.api_key = current_server.api_key
+        out.nebu_host = current_server.server
+        out.containers_url = f"{out.nebu_host}/v1/containers"
+
+        out = cls.from_v1(container_v1)
+        return out
+
+    @classmethod
+    def from_v1(cls, v1: V1Container) -> "Container":
+        out = cls.__new__(cls)
+        out.name = v1.metadata.name
+        out.namespace = v1.metadata.namespace
+        out.status = v1.status
+        out.kind = v1.kind
+        out.platform = v1.platform
+        out.metadata = v1.metadata
+        out.image = v1.image
+        out.env = v1.env
+        out.command = v1.command
+        out.volumes = v1.volumes
+        out.accelerators = v1.accelerators
+        out.resources = v1.resources
+        out.meters = v1.meters
+        out.restart = v1.restart
+        out.queue = v1.queue
+        out.timeout = v1.timeout
+        out.ssh_keys = v1.ssh_keys
+        return out
+
+    @classmethod
+    def search(
+        cls,
+        params: V1ContainerSearch,
+        config: Optional[GlobalConfig] = None,
+    ) -> List[V1Container]:
+        """
+        Search for containers on the remote server.
+        """
+        config = config or GlobalConfig.read()
+        current_server = config.get_current_server_config()
+        if not current_server:
+            raise ValueError("No current server config found")
+        api_key = current_server.api_key
+        nebu_host = current_server.server
+
+        search_url = f"{nebu_host}/v1/containers/search"
+
+        response = requests.post(
+            search_url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=params.model_dump(),
+        )
+        response.raise_for_status()
+
+        containers_response = V1Containers.model_validate(response.json())
+        return containers_response.containers

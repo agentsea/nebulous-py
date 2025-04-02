@@ -212,3 +212,27 @@ class V1Containers(BaseModel):
     containers: List[V1Container]
 
     model_config = ConfigDict(use_enum_values=True)
+
+
+class V1ContainerSearch(BaseModel):
+    namespace: Optional[str] = None
+    image: Optional[str] = None
+    env: Optional[List[V1EnvVar]] = None
+    command: Optional[str] = None
+    args: Optional[str] = None
+    volumes: Optional[List[V1VolumePath]] = None
+    accelerators: Optional[List[str]] = None
+    labels: Optional[Dict[str, str]] = None
+    cpu_request: Optional[str] = None
+    memory_request: Optional[str] = None
+    platform: Optional[str] = None
+    health_check: Optional[V1ContainerHealthCheck] = None
+    meters: Optional[List[V1Meter]] = None
+    restart: Optional[str] = None
+    queue: Optional[str] = None
+    timeout: Optional[str] = None
+    resources: Optional[V1ContainerResources] = None
+    proxy_port: Optional[int] = None
+    authz: Optional[V1AuthzConfig] = None
+
+    model_config = ConfigDict(use_enum_values=True)
