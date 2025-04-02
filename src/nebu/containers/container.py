@@ -18,6 +18,7 @@ from nebu.containers.models import (
     V1SSHKey,
     V1VolumePath,
 )
+from nebu.meta import V1ResourceReference
 
 
 class Container:
@@ -362,3 +363,10 @@ class Container:
 
         containers_response = V1Containers.model_validate(response.json())
         return containers_response.containers
+
+    def ref(self) -> V1ResourceReference:
+        return V1ResourceReference(
+            kind="Container",
+            name=self.name,
+            namespace=self.namespace,
+        )

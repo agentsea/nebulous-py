@@ -22,3 +22,12 @@ class V1ResourceMeta(BaseModel):
     created_by: str
     owner_ref: Optional[str] = None
     labels: Optional[Dict[str, str]] = None
+
+
+class V1ResourceReference(BaseModel):
+    kind: str
+    name: str
+    namespace: str
+
+    def to_string(self) -> str:
+        return f"{self.name}.{self.namespace}.{self.kind}"
