@@ -26,7 +26,7 @@ class Container:
         self,
         name: str,
         image: str,
-        namespace: str = "default",
+        namespace: Optional[str] = None,
         platform: Optional[str] = None,
         env: Optional[List[V1EnvVar]] = None,
         command: Optional[str] = None,
@@ -208,8 +208,8 @@ class Container:
 
         # Save constructor params to `self` for reference, like you do in ReplayBuffer.
         self.kind = "Container"
-        self.namespace = namespace
-        self.name = name
+        self.namespace = self.container.metadata.namespace
+        self.name = self.container.metadata.name
         self.platform = platform
         self.metadata = meta_request
         self.image = image
@@ -290,7 +290,7 @@ class Container:
     def load(
         cls,
         name: str,
-        namespace: str = "default",
+        namespace: Optional[str] = None,
         config: Optional[GlobalConfig] = None,
     ):
         """
