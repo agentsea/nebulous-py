@@ -75,6 +75,7 @@ class V1ContainerStatus(BaseModel):
     accelerator: Optional[str] = None
     tailnet_url: Optional[str] = None
     cost_per_hr: Optional[float] = None
+    ready: Optional[bool] = None
 
 
 class V1AuthzSecretRef(BaseModel):

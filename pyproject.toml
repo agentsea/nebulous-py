@@ -15,6 +15,7 @@ dependencies = [
 dev = [
     "ipykernel>=6.29.5",
     "pytest>=8.3.5",
+    "trl>=0.16.1",
 ]
 
 [tool.pyright]
