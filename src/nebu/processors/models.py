@@ -1,16 +1,13 @@
-from typing import Any, Optional
+from typing import Any, Generic, List, Optional, TypeVar
 
 from pydantic import BaseModel, Field
 
-from nebu.containers.models import V1Container
-from nebu.meta import V1ResourceMeta, V1ResourceMetaRequest
+# Assuming these are imported from other modules
+from nebu.containers.models import V1ContainerRequest
+from nebu.meta import V1ResourceMeta, V1ResourceMetaRequest, V1ResourceReference
 
-# If these are in another module, import them as:
-# from .containers import V1Container, V1ResourceMeta, V1ResourceMetaRequest
-# For demonstration, simply assume they're available in scope:
-# class V1Container(BaseModel): ...
-# class V1ResourceMeta(BaseModel): ...
-# class V1ResourceMetaRequest(BaseModel): ...
+# Type variable for content that must be a BaseModel
+T = TypeVar("T", bound=BaseModel)
 
 
 class V1ProcessorStatus(BaseModel):
@@ -39,29 +36,120 @@ class V1Scale(BaseModel):
     zero: Optional[V1ScaleZero] = None
 
 
-DEFAULT_PROCESSOR_KIND = "Processor"
+def default_processor_kind() -> str:
+    return "Processor"
 
 
 class V1Processor(BaseModel):
-    kind: str = Field(default=DEFAULT_PROCESSOR_KIND)
+    kind: str = Field(default_factory=default_processor_kind)
     metadata: V1ResourceMeta
-    container: Optional["V1Container"] = None
-    stream: Optional[str] = None
-    schema_: Optional[Any] = None  # Or Dict[str, Any], if you know the schema format
+    container: Optional[V1ContainerRequest] = None
+    stream: str
+    schema_: Optional[Any] = None
     common_schema: Optional[str] = None
     min_replicas: Optional[int] = None
     max_replicas: Optional[int] = None
     scale: Optional[V1Scale] = None
     status: Optional[V1ProcessorStatus] = None
 
+    def to_resource_reference(self) -> V1ResourceReference:
+        return V1ResourceReference(
+            kind=self.kind,
+            name=self.metadata.name,
+            namespace=self.metadata.namespace,
+        )
+
 
 class V1ProcessorRequest(BaseModel):
-    kind: str = Field(default=DEFAULT_PROCESSOR_KIND)
+    kind: str = Field(default_factory=default_processor_kind)
     metadata: V1ResourceMetaRequest
-    container: Optional["V1Container"] = None
-    stream: Optional[str] = None
+    container: Optional[V1ContainerRequest] = None
     schema_: Optional[Any] = None
     common_schema: Optional[str] = None
     min_replicas: Optional[int] = None
     max_replicas: Optional[int] = None
     scale: Optional[V1Scale] = None
+
+
+class V1Processors(BaseModel):
+    processors: List[V1Processor] = []
+
+
+class V1ProcessorScaleRequest(BaseModel):
+    replicas: Optional[int] = None
+    min_replicas: Optional[int] = None
+
+
+class V1UpdateProcessor(BaseModel):
+    kind: Optional[str] = None
+    metadata: Optional[V1ResourceMetaRequest] = None
+    container: Optional[V1ContainerRequest] = None
+    stream: Optional[str] = None
+    min_replicas: Optional[int] = None
+    max_replicas: Optional[int] = None
+    scale: Optional[V1Scale] = None
+    schema_: Optional[Any] = None
+    common_schema: Optional[str] = None
+    no_delete: Optional[bool] = None
+
+
+def kind_v1_stream_message() -> str:
+    return "StreamMessage"
+
+
+def kind_v1_stream_response_message() -> str:
+    return "StreamResponseMessage"
+
+
+def kind_v1_openai_stream_message() -> str:
+    return "OpenAIStreamMessage"
+
+
+def kind_v1_openai_stream_response() -> str:
+    return "OpenAIStreamResponse"
+
+
+class V1StreamData(BaseModel):
+    content: Any = None
+    wait: Optional[bool] = None
+
+
+class V1StreamMessage(Generic[T], BaseModel):
+    kind: str = Field(default_factory=kind_v1_stream_message)
+    id: str
+    content: Optional[T] = None
+    created_at: int
+    return_stream: Optional[str] = None
+    user_id: Optional[str] = None
+    orgs: Optional[Any] = None
+    handle: Optional[str] = None
+    adapter: Optional[str] = None
+
+
+class V1StreamResponseMessage(BaseModel):
+    kind: str = Field(default_factory=kind_v1_stream_response_message)
+    id: str
+    content: Any = None
+    status: Optional[str] = None
+    created_at: int
+    user_id: Optional[str] = None
+
+
+class V1OpenAIStreamMessage(BaseModel):
+    kind: str = Field(default_factory=kind_v1_openai_stream_message)
+    id: str
+    content: Any  # Using Any for ChatCompletionRequest
+    created_at: int
+    return_stream: Optional[str] = None
+    user_id: Optional[str] = None
+    orgs: Optional[Any] = None
+    handle: Optional[str] = None
+    adapter: Optional[str] = None
+
+
+class V1OpenAIStreamResponse(BaseModel):
+    kind: str = Field(default_factory=kind_v1_openai_stream_response)
+    id: str
+    content: Any  # Using Any for ChatCompletionResponse
+    created_at: int
+    user_id: Optional[str] = None
