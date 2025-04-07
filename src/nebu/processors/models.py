@@ -1,6 +1,6 @@
 from typing import Any, Generic, List, Optional, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 # Assuming these are imported from other modules
 from nebu.containers.models import V1ContainerRequest
@@ -36,12 +36,8 @@ class V1Scale(BaseModel):
     zero: Optional[V1ScaleZero] = None
 
 
-def default_processor_kind() -> str:
-    return "Processor"
-
-
 class V1Processor(BaseModel):
-    kind: str = Field(default_factory=default_processor_kind)
+    kind: str = "Processor"
     metadata: V1ResourceMeta
     container: Optional[V1ContainerRequest] = None
     stream: str
@@ -61,7 +57,7 @@ class V1Processor(BaseModel):
 
 
 class V1ProcessorRequest(BaseModel):
-    kind: str = Field(default_factory=default_processor_kind)
+    kind: str = "Processor"
     metadata: V1ResourceMetaRequest
     container: Optional[V1ContainerRequest] = None
     schema_: Optional[Any] = None
@@ -93,29 +89,13 @@ class V1UpdateProcessor(BaseModel):
     no_delete: Optional[bool] = None
 
 
-def kind_v1_stream_message() -> str:
-    return "StreamMessage"
-
-
-def kind_v1_stream_response_message() -> str:
-    return "StreamResponseMessage"
-
-
-def kind_v1_openai_stream_message() -> str:
-    return "OpenAIStreamMessage"
-
-
-def kind_v1_openai_stream_response() -> str:
-    return "OpenAIStreamResponse"
-
-
 class V1StreamData(BaseModel):
     content: Any = None
     wait: Optional[bool] = None
 
 
 class V1StreamMessage(Generic[T], BaseModel):
-    kind: str = Field(default_factory=kind_v1_stream_message)
+    kind: str = "StreamMessage"
     id: str
     content: Optional[T] = None
     created_at: int
@@ -127,7 +107,7 @@ class V1StreamMessage(Generic[T], BaseModel):
 
 
 class V1StreamResponseMessage(BaseModel):
-    kind: str = Field(default_factory=kind_v1_stream_response_message)
+    kind: str = "StreamResponseMessage"
     id: str
     content: Any = None
     status: Optional[str] = None
@@ -136,7 +116,7 @@ class V1StreamResponseMessage(BaseModel):
 
 
 class V1OpenAIStreamMessage(BaseModel):
-    kind: str = Field(default_factory=kind_v1_openai_stream_message)
+    kind: str = "OpenAIStreamMessage"
     id: str
     content: Any  # Using Any for ChatCompletionRequest
     created_at: int
@@ -148,7 +128,7 @@ class V1OpenAIStreamMessage(BaseModel):
 
 
 class V1OpenAIStreamResponse(BaseModel):
-    kind: str = Field(default_factory=kind_v1_openai_stream_response)
+    kind: str = "OpenAIStreamResponse"
     id: str
     content: Any  # Using Any for ChatCompletionResponse
     created_at: int
