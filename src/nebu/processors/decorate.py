@@ -170,6 +170,33 @@ def processor(
             function_source = inspect.getsource(func)
             # Clean up the indentation
             function_source = textwrap.dedent(function_source)
+
+            # Remove the @processor decorator (single or multi-line) if present
+            lines = function_source.split("\\n")
+            filtered_lines = []
+            skipping_decorator = False
+            decorator_name = "processor"  # Assuming the decorator is always @processor
+            for line in lines:
+                stripped_line = line.strip()
+                if stripped_line.startswith(f"@{decorator_name}"):
+                    skipping_decorator = True
+                    continue  # Skip the decorator starting line itself
+                if skipping_decorator:
+                    if stripped_line.startswith("def "):
+                        skipping_decorator = False
+                        # Add the 'def' line, as it's the start of the function
+                        filtered_lines.append(line)
+                    else:
+                        # Still inside the decorator block, skip this line
+                        continue
+                else:
+                    # Not skipping, and not the start of the decorator, so keep the line
+                    filtered_lines.append(line)
+
+            processed_function_source = "\\n".join(filtered_lines)
+            # Update function_source with the processed version
+            function_source = processed_function_source
+
         except (IOError, TypeError):
             raise ValueError(
                 f"Could not retrieve source code for function {func.__name__}"

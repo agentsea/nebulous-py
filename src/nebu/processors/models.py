@@ -94,7 +94,7 @@ class V1StreamData(BaseModel):
     wait: Optional[bool] = None
 
 
-class V1StreamMessage(Generic[T], BaseModel):
+class V1StreamMessage(BaseModel, Generic[T]):
     kind: str = "StreamMessage"
     id: str
     content: Optional[T] = None
