@@ -94,6 +94,8 @@ try:
         local_namespace,
     )
     exec("T = TypeVar('T')", local_namespace)
+    exec("from nebu.processors.models import *", local_namespace)
+    exec("from nebu.processors.processor import *", local_namespace)
 
     # First try to import the module to get any needed dependencies
     # This is a fallback in case the module is available

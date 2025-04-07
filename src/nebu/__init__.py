@@ -7,3 +7,6 @@ from .config import *
 from .containers.container import Container
 from .containers.models import *
 from .meta import *
+from .processors.decorate import *
+from .processors.models import *
+from .processors.processor import *

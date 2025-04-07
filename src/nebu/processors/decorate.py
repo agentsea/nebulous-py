@@ -187,14 +187,9 @@ def processor(
                 if stripped_line.startswith("def "):
                     func_def_index = i
                     break
-                elif stripped_line.startswith("@") or not stripped_line:
-                    # Skip decorator lines and empty lines before 'def'
-                    continue
-                else:
-                    # Found something unexpected before 'def'
-                    raise ValueError(
-                        f"Unexpected content found before 'def' in source for {func.__name__}. Cannot reliably strip decorators."
-                    )
+                # Simply continue if it's not the def line.
+                # This skips decorators and their arguments, regardless of multi-line formatting.
+                continue
 
             if func_def_index != -1:
                 # Keep lines from the 'def' line onwards
