@@ -97,6 +97,26 @@ try:
     exec("from nebu.processors.models import *", local_namespace)
     exec("from nebu.processors.processor import *", local_namespace)
 
+    # Execute included object sources FIRST, as they might define types needed by others
+    print("[Consumer] Executing included object sources...")
+    for i, (obj_source, args_sources) in enumerate(included_object_sources):
+        try:
+            exec(obj_source, local_namespace)
+            print(f"[Consumer] Successfully executed included object {i} base source")
+            for j, arg_source in enumerate(args_sources):
+                try:
+                    exec(arg_source, local_namespace)
+                    print(
+                        f"[Consumer] Successfully executed included object {i} arg {j} source"
+                    )
+                except Exception as e:
+                    print(f"Error executing included object {i} arg {j} source: {e}")
+                    traceback.print_exc()
+        except Exception as e:
+            print(f"Error executing included object {i} base source: {e}")
+            traceback.print_exc()
+    print("[Consumer] Finished executing included object sources.")
+
     # First try to import the module to get any needed dependencies
     # This is a fallback in case the module is available
     module_name = os.environ.get("MODULE_NAME")
@@ -174,22 +194,6 @@ try:
                     traceback.print_exc()
         except Exception as e:
             print(f"Error defining output model: {e}")
-            traceback.print_exc()
-
-    # Execute included object sources
-    for i, (obj_source, args_sources) in enumerate(included_object_sources):
-        try:
-            exec(obj_source, local_namespace)
-            print(f"Successfully executed included object {i} base source")
-            for j, arg_source in enumerate(args_sources):
-                try:
-                    exec(arg_source, local_namespace)
-                    print(f"Successfully executed included object {i} arg {j} source")
-                except Exception as e:
-                    print(f"Error executing included object {i} arg {j} source: {e}")
-                    traceback.print_exc()
-        except Exception as e:
-            print(f"Error executing included object {i} base source: {e}")
             traceback.print_exc()
 
     # Finally, execute the function code
