@@ -167,40 +167,55 @@ def processor(
 
         # Get the source code of the function
         try:
-            function_source = inspect.getsource(func)
-            # Clean up the indentation
-            function_source = textwrap.dedent(function_source)
-
-            # Remove the @processor decorator (single or multi-line) if present
-            lines = function_source.split("\\n")
-            filtered_lines = []
-            skipping_decorator = False
-            decorator_name = "processor"  # Assuming the decorator is always @processor
-            for line in lines:
-                stripped_line = line.strip()
-                if stripped_line.startswith(f"@{decorator_name}"):
-                    skipping_decorator = True
-                    continue  # Skip the decorator starting line itself
-                if skipping_decorator:
-                    if stripped_line.startswith("def "):
-                        skipping_decorator = False
-                        # Add the 'def' line, as it's the start of the function
-                        filtered_lines.append(line)
-                    else:
-                        # Still inside the decorator block, skip this line
-                        continue
-                else:
-                    # Not skipping, and not the start of the decorator, so keep the line
-                    filtered_lines.append(line)
-
-            processed_function_source = "\\n".join(filtered_lines)
-            # Update function_source with the processed version
-            function_source = processed_function_source
-
-        except (IOError, TypeError):
-            raise ValueError(
-                f"Could not retrieve source code for function {func.__name__}"
+            raw_function_source = inspect.getsource(func)
+            print(
+                f"[DEBUG Decorator] Raw source for {func.__name__}:\n{raw_function_source}"
             )
+
+            # Clean up the indentation
+            dedented_function_source = textwrap.dedent(raw_function_source)
+            print(
+                f"[DEBUG Decorator] Dedented source for {func.__name__}:\n{dedented_function_source}"
+            )
+
+            # Find the start of the function definition ('def')
+            # Skip lines starting with '@' or empty lines until 'def' is found
+            lines = dedented_function_source.splitlines()
+            func_def_index = -1
+            for i, line in enumerate(lines):
+                stripped_line = line.strip()
+                if stripped_line.startswith("def "):
+                    func_def_index = i
+                    break
+                elif stripped_line.startswith("@") or not stripped_line:
+                    # Skip decorator lines and empty lines before 'def'
+                    continue
+                else:
+                    # Found something unexpected before 'def'
+                    raise ValueError(
+                        f"Unexpected content found before 'def' in source for {func.__name__}. Cannot reliably strip decorators."
+                    )
+
+            if func_def_index != -1:
+                # Keep lines from the 'def' line onwards
+                function_source = "\n".join(
+                    lines[func_def_index:]
+                )  # Use \n for env var
+            else:
+                # If 'def' wasn't found (shouldn't happen with valid function source)
+                raise ValueError(
+                    f"Could not find function definition 'def' in source for {func.__name__}"
+                )
+
+            print(
+                f"[DEBUG Decorator] Processed function source for {func.__name__}:\n{function_source}"
+            )
+
+        except (IOError, TypeError) as e:
+            print(f"[DEBUG Decorator] Error getting source for {func.__name__}: {e}")
+            raise ValueError(
+                f"Could not retrieve source code for function {func.__name__}: {e}"
+            ) from e
 
         # Get source code for the models
         input_model_source = None
@@ -222,7 +237,11 @@ def processor(
         output_model_source = get_type_source(return_type)
 
         # Add function source code to environment variables
+        print(
+            f"[DEBUG Decorator] Setting FUNCTION_SOURCE: {function_source[:100]}..."
+        )  # Print first 100 chars
         all_env.append(V1EnvVar(key="FUNCTION_SOURCE", value=function_source))
+        print(f"[DEBUG Decorator] Setting FUNCTION_NAME: {func.__name__}")
         all_env.append(V1EnvVar(key="FUNCTION_NAME", value=func.__name__))
 
         # Add model source codes
