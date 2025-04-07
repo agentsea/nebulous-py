@@ -1,3 +1,4 @@
+import ast  # For parsing notebook code
 import inspect
 import re  # Import re for fallback check
 import textwrap
@@ -13,6 +14,7 @@ from typing import (
     get_type_hints,
 )
 
+import dill  # Add dill import
 from pydantic import BaseModel
 
 from nebu.containers.models import (
@@ -35,46 +37,301 @@ from .default import DEFAULT_MAX_REPLICAS, DEFAULT_MIN_REPLICAS, DEFAULT_SCALE
 T = TypeVar("T", bound=BaseModel)
 R = TypeVar("R", bound=BaseModel)
 
+# Attribute name for explicitly stored source
+_NEBU_EXPLICIT_SOURCE_ATTR = "_nebu_explicit_source"
 
-def get_model_source(model_class: Any) -> Optional[str]:
-    """Get the source code of a model class."""
+# --- Jupyter Helper Functions ---
+
+
+def is_jupyter_notebook():
+    """
+    Determine if the current code is running inside a Jupyter notebook.
+    Returns bool: True if running inside a Jupyter notebook, False otherwise.
+    """
+    print("[DEBUG Helper] Checking if running in Jupyter...")
     try:
-        source = inspect.getsource(model_class)
-        return textwrap.dedent(source)
-    except (IOError, TypeError):
-        print(f"[DEBUG get_model_source] Failed for: {model_class}")  # Added debug
+        import IPython
+
+        ip = IPython.get_ipython()
+        if ip is None:
+            print("[DEBUG Helper] is_jupyter_notebook: No IPython instance found.")
+            return False
+        class_name = str(ip.__class__)
+        print(f"[DEBUG Helper] is_jupyter_notebook: IPython class name: {class_name}")
+        if "ZMQInteractiveShell" in class_name:
+            print(
+                "[DEBUG Helper] is_jupyter_notebook: Jupyter detected (ZMQInteractiveShell)."
+            )
+            return True
+        print(
+            "[DEBUG Helper] is_jupyter_notebook: Not Jupyter (IPython instance found, but not ZMQInteractiveShell)."
+        )
+        return False
+    except Exception as e:
+        print(f"[DEBUG Helper] is_jupyter_notebook: Exception occurred: {e}")
+        return False
+
+
+def get_notebook_executed_code():
+    """
+    Returns all executed code from the current notebook session.
+    Returns str or None: All executed code as a string, or None if not possible.
+    """
+    print("[DEBUG Helper] Attempting to get notebook execution history...")
+    try:
+        import IPython
+
+        ip = IPython.get_ipython()
+        if ip is None or not hasattr(ip, "history_manager"):
+            print(
+                "[DEBUG Helper] get_notebook_executed_code: No IPython instance or history_manager."
+            )
+            return None
+        history_manager = ip.history_manager
+        # Limiting history range for debugging? Maybe get_tail(N)? For now, get all.
+        # history = history_manager.get_range(start=1) # type: ignore
+        history = list(history_manager.get_range(start=1))  # type: ignore # Convert to list to get length
+        print(
+            f"[DEBUG Helper] get_notebook_executed_code: Retrieved {len(history)} history entries."
+        )
+        source_code = ""
+        separator = "\n#<NEBU_CELL_SEP>#\n"
+        for _, _, content in history:  # Use _ for unused session, lineno
+            if isinstance(content, str) and content.strip():
+                source_code += content + separator
+        print(
+            f"[DEBUG Helper] get_notebook_executed_code: Total history source length: {len(source_code)}"
+        )
+        return source_code
+    except Exception as e:
+        print(f"[DEBUG Helper] get_notebook_executed_code: Error getting history: {e}")
         return None
 
 
-def get_type_source(type_obj: Any) -> Optional[Any]:
-    """Get the source code for a type, including generic parameters."""
-    # If it's a class, get its source
-    if isinstance(type_obj, type):
-        return get_model_source(type_obj)
+def extract_definition_source_from_string(
+    source_string: str, def_name: str, def_type: type = ast.FunctionDef
+) -> Optional[str]:
+    """
+    Attempts to extract the source code of a function or class from a larger string
+    (like notebook history). Finds the *last* complete definition.
+    Uses AST parsing for robustness.
+    def_type can be ast.FunctionDef or ast.ClassDef.
+    """
+    print(
+        f"[DEBUG Helper] Extracting '{def_name}' ({def_type.__name__}) from history string (len: {len(source_string)})..."
+    )
+    if not source_string or not def_name:
+        print("[DEBUG Helper] extract: Empty source string or def_name.")
+        return None
 
-    # If it's a GenericAlias (like V1StreamMessage[SomeType])
-    # Use get_origin and get_args for robustness
+    cells = source_string.split("#<NEBU_CELL_SEP>#")
+    print(f"[DEBUG Helper] extract: Split history into {len(cells)} potential cells.")
+    last_found_source = None
+
+    for i, cell in enumerate(reversed(cells)):
+        cell_num = len(cells) - 1 - i
+        cell = cell.strip()
+        if not cell:
+            continue
+        # print(f"[DEBUG Helper] extract: Analyzing cell #{cell_num}...") # Can be very verbose
+        try:
+            tree = ast.parse(cell)
+            found_in_cell = False
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, def_type)
+                    and hasattr(node, "name")
+                    and node.name == def_name
+                ):
+                    print(
+                        f"[DEBUG Helper] extract: Found node for '{def_name}' in cell #{cell_num}."
+                    )
+                    try:
+                        # Use ast.get_source_segment for accurate extraction (Python 3.8+)
+                        func_source = ast.get_source_segment(cell, node)
+                        if func_source:
+                            print(
+                                f"[DEBUG Helper] extract: Successfully extracted source using get_source_segment for '{def_name}'."
+                            )
+                            last_found_source = func_source
+                            found_in_cell = True
+                            break  # Stop searching this cell
+                    except AttributeError:  # Fallback for Python < 3.8
+                        print(
+                            f"[DEBUG Helper] extract: get_source_segment failed (likely Py < 3.8), using fallback for '{def_name}'."
+                        )
+                        start_lineno = getattr(node, "lineno", 1) - 1
+                        end_lineno = getattr(node, "end_lineno", start_lineno + 1)
+
+                        if hasattr(node, "decorator_list") and node.decorator_list:
+                            first_decorator_start_line = (
+                                getattr(
+                                    node.decorator_list[0], "lineno", start_lineno + 1
+                                )
+                                - 1
+                            )  # type: ignore
+                            start_lineno = min(start_lineno, first_decorator_start_line)
+
+                        lines = cell.splitlines()
+                        if 0 <= start_lineno < len(lines) and end_lineno <= len(lines):
+                            extracted_lines = lines[start_lineno:end_lineno]
+                            if extracted_lines and (
+                                extracted_lines[0].strip().startswith("@")
+                                or extracted_lines[0]
+                                .strip()
+                                .startswith(("def ", "class "))
+                            ):
+                                last_found_source = "\n".join(extracted_lines)
+                                print(
+                                    f"[DEBUG Helper] extract: Extracted source via fallback for '{def_name}'."
+                                )
+                                found_in_cell = True
+                                break
+                        else:
+                            print(
+                                f"[DEBUG Helper] extract: Warning: Line numbers out of bounds for {def_name} in cell (fallback)."
+                            )
+
+            if found_in_cell:
+                print(
+                    f"[DEBUG Helper] extract: Found and returning source for '{def_name}' from cell #{cell_num}."
+                )
+                return last_found_source  # Found last definition, return immediately
+
+        except (SyntaxError, ValueError) as e:
+            # print(f"[DEBUG Helper] extract: Skipping cell #{cell_num} due to parse error: {e}") # Can be verbose
+            continue
+        except Exception as e:
+            print(
+                f"[DEBUG Helper] extract: Warning: AST processing error for {def_name} in cell #{cell_num}: {e}"
+            )
+            continue
+
+    if not last_found_source:
+        print(
+            f"[DEBUG Helper] extract: Definition '{def_name}' of type {def_type.__name__} not found in history search."
+        )
+    return last_found_source
+
+
+# --- End Jupyter Helper Functions ---
+
+
+def include(obj: Any) -> Any:
+    """
+    Decorator to explicitly capture the source code of a function or class,
+    intended for use in environments where inspect/dill might fail (e.g., Jupyter).
+    """
+    try:
+        source = dill.source.getsource(obj)
+        dedented_source = textwrap.dedent(source)
+        setattr(obj, _NEBU_EXPLICIT_SOURCE_ATTR, dedented_source)
+        print(
+            f"[DEBUG @include] Successfully captured source for: {getattr(obj, '__name__', str(obj))}"
+        )
+    except Exception as e:
+        # Don't fail the definition, just warn
+        print(
+            f"Warning: @include could not capture source for {getattr(obj, '__name__', str(obj))}: {e}. Automatic source retrieval will be attempted later."
+        )
+    return obj
+
+
+def get_model_source(
+    model_class: Any, notebook_code: Optional[str] = None
+) -> Optional[str]:
+    """
+    Get the source code of a model class.
+    Checks explicit source, then notebook history (if provided), then dill.
+    """
+    model_name_str = getattr(model_class, "__name__", str(model_class))
+    print(f"[DEBUG get_model_source] Getting source for: {model_name_str}")
+    # 1. Check explicit source
+    explicit_source = getattr(model_class, _NEBU_EXPLICIT_SOURCE_ATTR, None)
+    if explicit_source:
+        print(
+            f"[DEBUG get_model_source] Using explicit source (@include) for: {model_name_str}"
+        )
+        return explicit_source
+
+    # 2. Check notebook history
+    if notebook_code and hasattr(model_class, "__name__"):
+        print(
+            f"[DEBUG get_model_source] Attempting notebook history extraction for: {model_class.__name__}"
+        )
+        extracted_source = extract_definition_source_from_string(
+            notebook_code, model_class.__name__, ast.ClassDef
+        )
+        if extracted_source:
+            print(
+                f"[DEBUG get_model_source] Using notebook history source for: {model_class.__name__}"
+            )
+            return extracted_source
+        else:
+            print(
+                f"[DEBUG get_model_source] Notebook history extraction failed for: {model_class.__name__}. Proceeding to dill."
+            )
+
+    # 3. Fallback to dill
+    try:
+        print(
+            f"[DEBUG get_model_source] Attempting dill fallback for: {model_name_str}"
+        )
+        source = dill.source.getsource(model_class)
+        print(f"[DEBUG get_model_source] Using dill source for: {model_name_str}")
+        return textwrap.dedent(source)
+    except (IOError, TypeError, OSError) as e:
+        print(
+            f"[DEBUG get_model_source] Failed dill fallback for: {model_name_str}: {e}"
+        )
+        return None
+
+
+# Reintroduce get_type_source to handle generics
+def get_type_source(
+    type_obj: Any, notebook_code: Optional[str] = None
+) -> Optional[Any]:
+    """Get the source code for a type, including generic parameters."""
+    type_obj_str = str(type_obj)
+    print(f"[DEBUG get_type_source] Getting source for type: {type_obj_str}")
     origin = get_origin(type_obj)
     args = get_args(type_obj)
 
     if origin is not None:
-        origin_source = get_model_source(origin)
+        # Use updated get_model_source for origin
+        print(
+            f"[DEBUG get_type_source] Detected generic type. Origin: {origin}, Args: {args}"
+        )
+        origin_source = get_model_source(origin, notebook_code)
         args_sources = []
 
-        # Get sources for all type arguments
+        # Recursively get sources for all type arguments
         for arg in args:
-            arg_source = get_type_source(arg)
+            print(
+                f"[DEBUG get_type_source] Recursively getting source for generic arg #{arg}"
+            )
+            arg_source = get_type_source(arg, notebook_code)
             if arg_source:
                 args_sources.append(arg_source)
 
-        # Return tuple only if origin source and some arg sources were found
+        # Return tuple only if origin source or some arg sources were found
         if origin_source or args_sources:
-            return (
-                origin_source,
-                args_sources,
-            )  # Return even if origin_source is None if args_sources exist
+            print(
+                f"[DEBUG get_type_source] Returning tuple source for generic: {type_obj_str}"
+            )
+            return (origin_source, args_sources)
 
-    return None  # Fallback if not a class or recognizable generic alias
+    # Fallback if not a class or recognizable generic alias
+    # Try get_model_source as a last resort for unknown types
+    fallback_source = get_model_source(type_obj, notebook_code)
+    if fallback_source:
+        print(
+            f"[DEBUG get_type_source] Using fallback get_model_source for: {type_obj_str}"
+        )
+        return fallback_source
+
+    print(f"[DEBUG get_type_source] Failed to get source for: {type_obj_str}")
+    return None
 
 
 def processor(
@@ -96,373 +353,434 @@ def processor(
     no_delete: bool = False,
     include: Optional[List[Any]] = None,
 ):
-    """
-    Decorator that converts a function into a Processor.
-
-    Args:
-        image: The container image to use for the processor
-        setup_script: Optional setup script to run before starting the processor
-        scale: Optional scaling configuration
-        min_replicas: Minimum number of replicas to maintain
-        max_replicas: Maximum number of replicas to scale to
-        platform: Optional compute platform to run on
-        accelerators: Optional list of accelerator types
-        namespace: Optional namespace for the processor
-        labels: Optional labels to apply to the processor
-        env: Optional environment variables
-        volumes: Optional volume mounts
-        resources: Optional resource requirements
-        meters: Optional metering configuration
-        authz: Optional authorization configuration
-        python_cmd: Optional python command to use
-        no_delete: Whether to prevent deleting the processor on updates
-        include: Optional list of Python objects whose source code should be included
-    """
-
     def decorator(
         func: Callable[[Any], Any],
-    ) -> Processor:  # Changed T/R to Any for broader compatibility
-        # Prepare environment variables early
+    ) -> Processor:
+        # Moved init print here
+        print(
+            f"[DEBUG Decorator Init] @processor decorating function '{func.__name__}'"
+        )
         all_env = env or []
+        processor_name = func.__name__
 
-        # --- Process Included Objects First ---
-        included_sources: Dict[Any, Any] = {}  # Store source keyed by the object itself
+        # --- Determine Environment and Get Notebook Code ---
+        print("[DEBUG Decorator] Determining execution environment...")
+        in_jupyter = is_jupyter_notebook()
+        notebook_code = None
+        if in_jupyter:
+            print("[DEBUG Decorator] Jupyter environment detected.")
+            notebook_code = get_notebook_executed_code()
+            if not notebook_code:
+                print(
+                    "[DEBUG Decorator] Warning: Failed to get Jupyter execution history. Will attempt dill."
+                )
+            else:
+                print(
+                    f"[DEBUG Decorator] Retrieved notebook history (length: {len(notebook_code)})."
+                )
+        else:
+            print("[DEBUG Decorator] Non-Jupyter environment detected.")
+        # --- End Environment Determination ---
+
+        # --- Process Manually Included Objects ---
+        included_sources: Dict[Any, Any] = {}
         if include:
-            print(f"[DEBUG Decorator] Processing included objects: {include}")
+            print(f"[DEBUG Decorator] Processing manually included objects: {include}")
             for i, obj in enumerate(include):
-                # Directly use get_model_source as include expects types/classes usually
-                obj_source = get_model_source(obj)
+                obj_name_str = getattr(obj, "__name__", str(obj))
+                print(
+                    f"[DEBUG Decorator] Getting source for manually included object: {obj_name_str}"
+                )
+                obj_source = get_model_source(obj, notebook_code)
                 if obj_source:
-                    print(f"[DEBUG Decorator] Found source for included object: {obj}")
-                    included_sources[obj] = obj_source  # Store source by object
-                    # Add to env vars immediately (simplifies later logic)
+                    included_sources[obj] = obj_source
                     env_key = f"INCLUDED_OBJECT_{i}_SOURCE"
                     all_env.append(V1EnvVar(key=env_key, value=obj_source))
-                    print(f"[DEBUG Decorator] Added {env_key} for {obj}")
-
-                else:
-                    # Optionally raise an error or log a warning if source can't be found
                     print(
-                        f"Warning: Could not retrieve source via get_model_source for included object: {obj}. Decorator might fail if this type is needed but cannot be auto-detected."
+                        f"[DEBUG Decorator] Added source to env for included obj: {obj_name_str}"
+                    )
+                else:
+                    print(
+                        f"Warning: Could not retrieve source for manually included object: {obj_name_str}"
                     )
             print(
                 f"[DEBUG Decorator] Finished processing included objects. Sources found: {len(included_sources)}"
             )
-        # --- End Included Objects Processing ---
+        else:
+            print("[DEBUG Decorator] No manually included objects specified.")
+        # --- End Manually Included Objects ---
 
-        # Validate function signature
+        # --- Validate Function Signature and Types ---
+        print(
+            f"[DEBUG Decorator] Validating signature and type hints for {processor_name}..."
+        )
         sig = inspect.signature(func)
         params = list(sig.parameters.values())
-
         if len(params) != 1:
-            raise TypeError(f"Function {func.__name__} must take exactly one parameter")
+            raise TypeError(f"{processor_name} must take one parameter")
 
-        # Check parameter type hint
         try:
-            # Use eval_str=True for forward references if needed, requires Python 3.10+ globals/locals
-            type_hints = get_type_hints(
-                func, globalns=func.__globals__, localns=None
-            )  # Pass globals
+            type_hints = get_type_hints(func, globalns=func.__globals__, localns=None)
+            print(f"[DEBUG Decorator] Raw type hints: {type_hints}")
         except Exception as e:
-            print(
-                f"[DEBUG Decorator] Error getting type hints for {func.__name__}: {e}"
-            )
+            print(f"[DEBUG Decorator] Error getting type hints: {e}")
             raise TypeError(
-                f"Could not evaluate type hints for {func.__name__}. Ensure all types are defined or imported."
+                f"Could not evaluate type hints for {processor_name}: {e}"
             ) from e
 
         param_name = params[0].name
         if param_name not in type_hints:
             raise TypeError(
-                f"Parameter {param_name} in function {func.__name__} must have a type annotation"
+                f"{processor_name} parameter '{param_name}' must have type hint"
             )
         param_type = type_hints[param_name]
+        param_type_str_repr = str(param_type)  # Use string for regex
+        print(
+            f"[DEBUG Decorator] Parameter '{param_name}' type hint: {param_type_str_repr}"
+        )
 
-        # --- Determine Input Type, Content Type, and is_stream_message ---
-        print(f"[DEBUG Decorator] Full type_hints: {type_hints}")
-        print(f"[DEBUG Decorator] Detected param_type: {param_type}")
+        if "return" not in type_hints:
+            raise TypeError(f"{processor_name} must have return type hint")
+        return_type = type_hints["return"]
+        print(f"[DEBUG Decorator] Return type hint: {return_type}")
+
+        # --- Determine Input Type (StreamMessage, ContentType) ---
+        print(
+            f"[DEBUG Decorator] Determining input type structure for param type hint: {param_type_str_repr}"
+        )
         origin = get_origin(param_type)
         args = get_args(param_type)
-        print(f"[DEBUG Decorator] Param type origin (using get_origin): {origin}")
-        print(f"[DEBUG Decorator] Param type args (using get_args): {args}")
-        if origin:
-            print(
-                f"[DEBUG Decorator] Origin name: {getattr(origin, '__name__', 'N/A')}, module: {getattr(origin, '__module__', 'N/A')}"
-            )
-            print(
-                f"[DEBUG Decorator] V1StreamMessage name: {V1StreamMessage.__name__}, module: {V1StreamMessage.__module__}"
-            )
-
+        print(f"[DEBUG Decorator] get_origin result: {origin}, get_args result: {args}")
         is_stream_message = False
         content_type = None
 
-        # Check 1: Standard check using get_origin
-        if (
+        # Check 1: Standard introspection
+        if origin is V1StreamMessage or (
             origin is not None
             and origin.__name__ == V1StreamMessage.__name__
             and origin.__module__ == V1StreamMessage.__module__
         ):
+            print(
+                "[DEBUG Decorator] Input type identified as V1StreamMessage via get_origin."
+            )
             is_stream_message = True
-            print("[DEBUG Decorator] V1StreamMessage detected via origin check.")
             if args:
                 content_type = args[0]
-
-        # Check 2: Fallback check using string representation
-        elif origin is None:
-            type_str = str(param_type)
-            match = re.match(
-                r"<class 'nebu\.processors\.models\.V1StreamMessage\[(.*)\]\'>",
-                type_str,
+                print(
+                    f"[DEBUG Decorator] Content type extracted via get_args: {content_type}"
+                )
+            else:
+                print(
+                    "[DEBUG Decorator] V1StreamMessage detected, but no generic arguments found via get_args."
+                )
+        # Check 2: Direct type check
+        elif isinstance(param_type, type) and param_type is V1StreamMessage:
+            print(
+                "[DEBUG Decorator] Input type identified as direct V1StreamMessage type."
             )
-            if match:
-                print(
-                    "[DEBUG Decorator] V1StreamMessage detected via string regex check (origin/args failed)."
-                )
-                content_type_name = match.group(1)
-                print(
-                    f"[DEBUG Decorator] Manually parsed content_type name: {content_type_name}"
-                )
-                # Attempt to find the type
-                resolved_type = None
-                func_globals = func.__globals__
-                if content_type_name in func_globals:
-                    resolved_type = func_globals[content_type_name]
-                    print(
-                        f"[DEBUG Decorator] Found content type '{content_type_name}' in function globals."
-                    )
-                else:
-                    func_module = inspect.getmodule(func)
-                    if func_module and hasattr(func_module, content_type_name):
-                        resolved_type = getattr(func_module, content_type_name)
-                        print(
-                            f"[DEBUG Decorator] Found content type '{content_type_name}' in function module."
-                        )
-
-                if resolved_type:
-                    content_type = resolved_type
-                    is_stream_message = True  # Set flag *only if* resolved
-                else:
-                    print(
-                        f"[DEBUG Decorator] Fallback failed: Could not find type '{content_type_name}' in globals or module. Use 'include'."
-                    )
-            # else: Fallback regex did not match
-
-        # Check 3: Handle direct V1StreamMessage
-        elif param_type is V1StreamMessage:
-            print("[DEBUG Decorator] V1StreamMessage detected via direct type check.")
             is_stream_message = True
-            # content_type remains None
+        # Check 3: Regex fallback on string representation
+        elif origin is None:
+            print(
+                f"[DEBUG Decorator] get_origin failed. Attempting regex fallback on type string: '{param_type_str_repr}'"
+            )
+            # Use param_type_str_repr in match calls
+            generic_match = re.match(
+                r"^<class '(?:[a-zA-Z0-9_.]+\.)?V1StreamMessage\[(.+?)\]'>$",
+                param_type_str_repr,
+            )
+            if generic_match:
+                print(
+                    "[DEBUG Decorator] Regex matched generic V1StreamMessage pattern!"
+                )
+                is_stream_message = True
+                content_type_name_str = generic_match.group(1).strip()
+                print(
+                    f"[DEBUG Decorator] Captured content type name via regex: '{content_type_name_str}'"
+                )
+                try:
+                    resolved_type = eval(content_type_name_str, func.__globals__)
+                    content_type = resolved_type
+                    print(
+                        f"[DEBUG Decorator] Successfully resolved content type name '{content_type_name_str}' to type: {content_type}"
+                    )
+                except NameError:
+                    print(
+                        f"[DEBUG Decorator] Warning: Regex found content type name '{content_type_name_str}', but it's not defined in function's globals. Consumer might fail."
+                    )
+                    content_type = None
+                except Exception as e:
+                    print(
+                        f"[DEBUG Decorator] Warning: Error evaluating content type name '{content_type_name_str}': {e}"
+                    )
+                    content_type = None
+            else:
+                # Use param_type_str_repr in match calls
+                simple_match = re.match(
+                    r"^<class '(?:[a-zA-Z0-9_.]+\.)?V1StreamMessage'>$",
+                    param_type_str_repr,
+                )
+                if simple_match:
+                    print(
+                        "[DEBUG Decorator] Regex identified direct V1StreamMessage (no generic) from string."
+                    )
+                    is_stream_message = True
+                else:
+                    print(
+                        f"[DEBUG Decorator] Regex did not match V1StreamMessage pattern for string '{param_type_str_repr}'. Assuming not StreamMessage."
+                    )
+        else:
+            print(
+                f"[DEBUG Decorator] Input parameter '{param_name}' type ({param_type_str_repr}) identified as non-StreamMessage type (origin was not None and not V1StreamMessage)."
+            )
 
-        print(f"[DEBUG Decorator] Final is_stream_message: {is_stream_message}")
-        print(f"[DEBUG Decorator] Final content_type: {content_type}")
+        print(
+            f"[DEBUG Decorator] Final Input Type Determination: is_stream_message={is_stream_message}, content_type={content_type}"
+        )
         # --- End Input Type Determination ---
 
-        # --- Validate Parameter Type is BaseModel ---
-        type_to_check_for_basemodel = None
-        if is_stream_message:
-            if content_type:
-                type_to_check_for_basemodel = content_type
-            # else: Base V1StreamMessage itself is a BaseModel, no need to check further
-        else:
-            type_to_check_for_basemodel = param_type
+        # --- Validate Types are BaseModel ---
+        print(
+            "[DEBUG Decorator] Validating parameter and return types are BaseModel subclasses..."
+        )
 
-        if type_to_check_for_basemodel:
-            actual_type_to_check = (
-                get_origin(type_to_check_for_basemodel) or type_to_check_for_basemodel
+        def check_basemodel(type_to_check, desc):
+            print(
+                f"[DEBUG Decorator] check_basemodel: Checking {desc} - Type: {type_to_check}"
             )
-            if not issubclass(actual_type_to_check, BaseModel):
-                raise TypeError(
-                    f"Parameter '{param_name}' effective type ({actual_type_to_check.__name__}) in function '{func.__name__}' must be a BaseModel subclass"
+            if not type_to_check:
+                print(
+                    f"[DEBUG Decorator] check_basemodel: Skipping check for {desc} (type is None/empty)."
                 )
-        # --- End Parameter Validation ---
+                return
+            actual_type = get_origin(type_to_check) or type_to_check
+            print(
+                f"[DEBUG Decorator] check_basemodel: Actual type for {desc}: {actual_type}"
+            )
+            if isinstance(actual_type, type) and not issubclass(actual_type, BaseModel):
+                print(
+                    f"[DEBUG Decorator] check_basemodel: Error - {desc} effective type ({actual_type.__name__}) is not a BaseModel subclass."
+                )
+                raise TypeError(
+                    f"{desc} effective type ({actual_type.__name__}) must be BaseModel subclass"
+                )
+            elif not isinstance(actual_type, type):
+                print(
+                    f"[DEBUG Decorator] check_basemodel: Warning - {desc} effective type '{actual_type}' is not a class. Cannot verify BaseModel subclass."
+                )
+            else:
+                print(
+                    f"[DEBUG Decorator] check_basemodel: OK - {desc} effective type ({actual_type.__name__}) is a BaseModel subclass."
+                )
 
-        # --- Validate Return Type ---
-        if "return" not in type_hints:
-            raise TypeError(
-                f"Function {func.__name__} must have a return type annotation"
-            )
-        return_type = type_hints["return"]
-        actual_return_type = get_origin(return_type) or return_type
-        if not issubclass(actual_return_type, BaseModel):
-            raise TypeError(
-                f"Return value of function {func.__name__} must be a BaseModel subclass"
-            )
-        # --- End Return Type Validation ---
+        effective_param_type = (
+            content_type
+            if is_stream_message and content_type
+            else param_type
+            if not is_stream_message
+            else None
+        )
+        check_basemodel(effective_param_type, f"Parameter '{param_name}'")
+        check_basemodel(return_type, "Return value")
+        print("[DEBUG Decorator] Type validation complete.")
+        # --- End Type Validation ---
 
         # --- Get Function Source ---
-        processor_name = func.__name__
-        try:
-            raw_function_source = inspect.getsource(func)
-            # ... (rest of source processing remains the same) ...
-            lines = raw_function_source.splitlines()
-            func_def_index = -1
-            decorator_lines = 0
-            in_decorator = False
-            for i, line in enumerate(lines):
-                stripped_line = line.strip()
-                if stripped_line.startswith("@"):
-                    in_decorator = True
-                    decorator_lines += 1
-                    continue  # Skip decorator line
-                if in_decorator and stripped_line.endswith(
-                    ")"
-                ):  # Simple check for end of decorator args
-                    in_decorator = False
-                    decorator_lines += 1
-                    continue
-                if in_decorator:
-                    decorator_lines += 1
-                    continue  # Skip multi-line decorator args
+        print(
+            f"[DEBUG Decorator] Getting source code for function '{processor_name}'..."
+        )
+        function_source = None
+        explicit_source = getattr(func, _NEBU_EXPLICIT_SOURCE_ATTR, None)
 
-                if stripped_line.startswith("def "):
-                    func_def_index = i
-                    break
-
-            if func_def_index != -1:
-                # Keep lines from the 'def' line onwards
-                function_source = "\n".join(lines[func_def_index:])
-            else:
-                raise ValueError(
-                    f"Could not find function definition 'def' in source for {func.__name__}"
-                )
-
+        if explicit_source:
             print(
-                f"[DEBUG Decorator] Processed function source for {func.__name__}:\n{function_source[:200]}..."
+                f"[DEBUG Decorator] Using explicit source (@include) for function {processor_name}"
+            )
+            function_source = explicit_source
+        elif in_jupyter and notebook_code:
+            print(
+                f"[DEBUG Decorator] Attempting notebook history extraction for function '{processor_name}'..."
+            )
+            function_source = extract_definition_source_from_string(
+                notebook_code, processor_name, ast.FunctionDef
+            )
+            if function_source:
+                print(
+                    f"[DEBUG Decorator] Found function '{processor_name}' source in notebook history."
+                )
+            else:
+                print(
+                    f"[DEBUG Decorator] Failed to find function '{processor_name}' in notebook history, falling back to dill."
+                )
+        if function_source is None:
+            print(
+                f"[DEBUG Decorator] Using dill fallback for function '{processor_name}'..."
+            )
+            try:
+                raw_function_source = dill.source.getsource(func)
+                function_source = textwrap.dedent(raw_function_source)
+                print(
+                    f"[DEBUG Decorator] Successfully got source via dill for '{processor_name}'."
+                )
+            except (IOError, TypeError, OSError) as e:
+                print(
+                    f"[DEBUG Decorator] Dill fallback failed for '{processor_name}': {e}"
+                )
+                if not (in_jupyter and notebook_code):
+                    raise ValueError(
+                        f"Could not retrieve source for '{processor_name}' using dill: {e}"
+                    ) from e
+
+        if function_source is None:  # Final check after all attempts
+            raise ValueError(
+                f"Failed to obtain source code for function '{processor_name}' using any method."
             )
 
-        except (IOError, TypeError) as e:
-            print(f"[DEBUG Decorator] Error getting source for {func.__name__}: {e}")
-            raise ValueError(
-                f"Could not retrieve source code for function {func.__name__}: {e}"
-            ) from e
+        print(f"[DEBUG Decorator] Final function source obtained for '{processor_name}' (len: {len(function_source)}). Source starts:\n-------\
+{function_source[:250]}...\n-------")
         # --- End Function Source ---
 
-        # --- Get Model Sources (Prioritizing Included) ---
+        # --- Get Model Sources ---
+        print("[DEBUG Decorator] Getting model sources...")
         input_model_source = None
         output_model_source = None
         content_type_source = None
-        stream_message_source = get_model_source(V1StreamMessage)  # Still get this
+        print("[DEBUG Decorator] Getting base V1StreamMessage source...")
+        stream_message_source = get_type_source(V1StreamMessage, notebook_code)
 
-        # Get content_type source (if applicable)
-        if is_stream_message and content_type:
-            if content_type in included_sources:
-                content_type_source = included_sources[content_type]
+        if is_stream_message:
+            print(
+                f"[DEBUG Decorator] Input is StreamMessage. Content type: {content_type}"
+            )
+            if content_type:
                 print(
-                    f"[DEBUG Decorator] Using included source for content_type: {content_type}"
+                    f"[DEBUG Decorator] Getting source for content_type: {content_type}"
                 )
-            else:
-                print(
-                    f"[DEBUG Decorator] Attempting get_type_source for content_type: {content_type}"
-                )
-                content_type_source = get_type_source(content_type)
+                content_type_source = get_type_source(content_type, notebook_code)
                 if content_type_source is None:
                     print(
-                        f"[DEBUG Decorator] Warning: get_type_source failed for content_type: {content_type}. Consumer might fail if not included."
+                        f"Warning: Failed to get source for content_type: {content_type}"
                     )
-
+        else:  # Not a stream message
             print(
-                f"[DEBUG Decorator] Final content_type_source: {str(content_type_source)[:100]}..."
+                f"[DEBUG Decorator] Input is not StreamMessage. Getting source for param_type: {param_type}"
             )
-
-        # Get input_model source (which is V1StreamMessage if is_stream_message)
-        if is_stream_message:
-            input_model_source = (
-                stream_message_source  # Always use base stream message source
-            )
-        elif (
-            param_type in included_sources
-        ):  # Check if non-stream-message input type was included
-            input_model_source = included_sources[param_type]
-            print(
-                f"[DEBUG Decorator] Using included source for param_type: {param_type}"
-            )
-        else:  # Fallback for non-stream-message, non-included input type
-            print(
-                f"[DEBUG Decorator] Attempting get_type_source for param_type: {param_type}"
-            )
-            input_model_source = get_type_source(param_type)
+            input_model_source = get_type_source(param_type, notebook_code)
             if input_model_source is None:
                 print(
-                    f"[DEBUG Decorator] Warning: get_type_source failed for param_type: {param_type}. Consumer might fail if not included."
+                    f"Warning: Failed to get source for input param_type: {param_type}"
                 )
-        print(
-            f"[DEBUG Decorator] Final input_model_source: {str(input_model_source)[:100]}..."
-        )
 
-        # Get output_model source
-        if return_type in included_sources:
-            output_model_source = included_sources[return_type]
-            print(
-                f"[DEBUG Decorator] Using included source for return_type: {return_type}"
-            )
-        else:
-            print(
-                f"[DEBUG Decorator] Attempting get_type_source for return_type: {return_type}"
-            )
-            output_model_source = get_type_source(return_type)
-            if output_model_source is None:
-                print(
-                    f"[DEBUG Decorator] Warning: get_type_source failed for return_type: {return_type}. Consumer might fail if not included."
-                )
+        print(f"[DEBUG Decorator] Getting source for return_type: {return_type}")
+        output_model_source = get_type_source(return_type, notebook_code)
+        if output_model_source is None:
+            print(f"Warning: Failed to get source for return_type: {return_type}")
+
         print(
-            f"[DEBUG Decorator] Final output_model_source: {str(output_model_source)[:100]}..."
+            f"[DEBUG Decorator] Source Result - Content Type: {'Found' if content_type_source else 'Not Found or N/A'}"
+        )
+        print(
+            f"[DEBUG Decorator] Source Result - Input Model (non-stream): {'Found' if input_model_source else 'Not Found or N/A'}"
+        )
+        print(
+            f"[DEBUG Decorator] Source Result - Output Model: {'Found' if output_model_source else 'Not Found'}"
+        )
+        print(
+            f"[DEBUG Decorator] Source Result - Base StreamMessage: {'Found' if stream_message_source else 'Not Found'}"
         )
         # --- End Model Sources ---
 
         # --- Populate Environment Variables ---
         print("[DEBUG Decorator] Populating environment variables...")
         all_env.append(V1EnvVar(key="FUNCTION_SOURCE", value=function_source))
-        all_env.append(V1EnvVar(key="FUNCTION_NAME", value=func.__name__))
+        all_env.append(V1EnvVar(key="FUNCTION_NAME", value=processor_name))
 
-        # Add model source codes (handle tuples from get_type_source if necessary, although unlikely with prioritization)
         def add_source_to_env(key_base: str, source: Any):
-            if source:
-                if isinstance(source, tuple):
-                    # This path is less likely now with include prioritization
-                    if source[0]:  # Origin source
+            print(f"[DEBUG Decorator] add_source_to_env: Processing key '{key_base}'")
+            if not source:
+                print(
+                    f"[DEBUG Decorator] add_source_to_env: No source for '{key_base}', skipping."
+                )
+                return
+
+            if isinstance(source, tuple):
+                origin_src, arg_srcs = source
+                print(
+                    f"[DEBUG Decorator] add_source_to_env: '{key_base}' is tuple source. Origin found: {bool(origin_src)}, Num args: {len(arg_srcs)}"
+                )
+                if origin_src and isinstance(origin_src, str):
+                    all_env.append(V1EnvVar(key=f"{key_base}_SOURCE", value=origin_src))
+                    print(f"[DEBUG Decorator] Added env var {key_base}_SOURCE (origin)")
+                for i, arg_src in enumerate(arg_srcs):
+                    if isinstance(arg_src, str):
                         all_env.append(
-                            V1EnvVar(key=f"{key_base}_SOURCE", value=source[0])
+                            V1EnvVar(key=f"{key_base}_ARG_{i}_SOURCE", value=arg_src)
                         )
-                    for i, arg_source in enumerate(source[1]):  # Arg sources
-                        all_env.append(
-                            V1EnvVar(key=f"{key_base}_ARG_{i}_SOURCE", value=arg_source)
+                        print(
+                            f"[DEBUG Decorator] Added env var {key_base}_ARG_{i}_SOURCE"
                         )
-                else:  # Simple string source
-                    all_env.append(V1EnvVar(key=f"{key_base}_SOURCE", value=source))
+                    elif isinstance(arg_src, tuple):
+                        arg_origin_src, _ = arg_src
+                        if arg_origin_src and isinstance(arg_origin_src, str):
+                            all_env.append(
+                                V1EnvVar(
+                                    key=f"{key_base}_ARG_{i}_SOURCE",
+                                    value=arg_origin_src,
+                                )
+                            )
+                            print(
+                                f"[DEBUG Decorator] Added env var {key_base}_ARG_{i}_SOURCE (nested origin)"
+                            )
+                        else:
+                            print(
+                                f"[DEBUG Decorator] Skipping complex/non-string nested arg origin for {key_base}_ARG_{i}"
+                            )
+                    else:
+                        print(
+                            f"[DEBUG Decorator] Skipping complex/non-string arg source for {key_base}_ARG_{i}"
+                        )
+            elif isinstance(source, str):
+                all_env.append(V1EnvVar(key=f"{key_base}_SOURCE", value=source))
+                print(f"[DEBUG Decorator] Added env var {key_base}_SOURCE (string)")
+            else:
+                print(
+                    f"[DEBUG Decorator] Warning: Unknown source type for {key_base}: {type(source)}. Skipping."
+                )
 
         add_source_to_env("INPUT_MODEL", input_model_source)
         add_source_to_env("OUTPUT_MODEL", output_model_source)
         add_source_to_env("CONTENT_TYPE", content_type_source)
-        add_source_to_env(
-            "STREAM_MESSAGE", stream_message_source
-        )  # Add base stream message source
+        add_source_to_env("STREAM_MESSAGE", stream_message_source)
 
-        # Type names for consumer validation/parsing
-        all_env.append(
-            V1EnvVar(
-                key="PARAM_TYPE_STR", value=str(param_type)
-            )  # Send string representation
-        )
-        all_env.append(
-            V1EnvVar(
-                key="RETURN_TYPE_STR", value=str(return_type)
-            )  # Send string representation
-        )
+        print("[DEBUG Decorator] Adding type info env vars...")
+        all_env.append(V1EnvVar(key="PARAM_TYPE_STR", value=param_type_str_repr))
+        all_env.append(V1EnvVar(key="RETURN_TYPE_STR", value=str(return_type)))
         all_env.append(V1EnvVar(key="IS_STREAM_MESSAGE", value=str(is_stream_message)))
-        if content_type:
+        if content_type and hasattr(content_type, "__name__"):
             all_env.append(
                 V1EnvVar(key="CONTENT_TYPE_NAME", value=content_type.__name__)
             )
-
         all_env.append(V1EnvVar(key="MODULE_NAME", value=func.__module__))
+        print("[DEBUG Decorator] Finished populating environment variables.")
         # --- End Environment Variables ---
 
         # --- Final Setup ---
+        print("[DEBUG Decorator] Preparing final Processor object...")
         metadata = V1ResourceMetaRequest(
             name=processor_name, namespace=namespace, labels=labels
         )
         consumer_command = f"{python_cmd} -m nebu.processors.consumer"
-        final_command = f"{python_cmd} -m pip install redis nebu\n\n{setup_script or ''}\n\n{consumer_command}"
+        setup_commands = [
+            f"{python_cmd} -m pip install dill pydantic redis nebu",  # Base deps
+        ]
+        if setup_script:
+            print("[DEBUG Decorator] Adding setup script to command.")
+            setup_commands.append(f"\n{setup_script}\n")
+        setup_commands.append(consumer_command)
+        final_command = "\n".join(setup_commands)
+        print(
+            f"[DEBUG Decorator] Final container command:\n-------\n{final_command}\n-------"
+        )
 
         container_request = V1ContainerRequest(
             image=image,
@@ -477,15 +795,16 @@ def processor(
             platform=platform,
             metadata=metadata,
         )
-        print("[DEBUG Decorator] Final Container Request Env Vars:")
+        print("[DEBUG Decorator] Final Container Request Env Vars (Summary):")
         for env_var in all_env:
-            print(
-                f"[DEBUG Decorator]  {env_var.key}: {str(env_var.value)[:70]}..."
-            )  # Print key and start of value
+            if "SOURCE" in env_var.key:
+                print(f"[DEBUG Decorator]  {env_var.key}: <source code present>")
+            else:
+                print(f"[DEBUG Decorator]  {env_var.key}: {env_var.value}")
 
         processor_instance = Processor(
             name=processor_name,
-            stream=processor_name,  # Default stream name to processor name
+            stream=processor_name,
             namespace=namespace,
             labels=labels,
             container=container_request,
@@ -496,7 +815,9 @@ def processor(
             scale_config=scale,
             no_delete=no_delete,
         )
-
+        print(
+            f"[DEBUG Decorator] Processor instance '{processor_name}' created successfully."
+        )
         return processor_instance
 
     return decorator

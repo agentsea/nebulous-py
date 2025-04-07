@@ -1,9 +1,9 @@
 import base64
-import inspect
 import pickle
 import time
 from typing import Any, Callable, List, Optional
 
+import dill  # Import dill
 import requests
 
 from nebu.containers.container import Container
@@ -47,8 +47,16 @@ def container(
                 )
                 time.sleep(1)
 
-            # Get function source code
-            func_code = inspect.getsource(func)
+            # Get function source code using dill
+            try:
+                func_code = dill.source.getsource(func)
+            except (OSError, TypeError) as e:
+                raise RuntimeError(
+                    f"Failed to retrieve source code for function '{func.__name__}'. "
+                    "This can happen with functions defined dynamically or interactively "
+                    "(e.g., in a Jupyter notebook or REPL). Ensure the function is defined "
+                    f"in a standard Python module if possible. Original error: {e}"
+                )
 
             # Serialize arguments using pickle for complex objects
             serialized_args = base64.b64encode(pickle.dumps(args)).decode("utf-8")
