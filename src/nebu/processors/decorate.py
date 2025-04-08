@@ -769,7 +769,7 @@ def processor(
         metadata = V1ResourceMetaRequest(
             name=processor_name, namespace=namespace, labels=labels
         )
-        consumer_command = f"{python_cmd} -m nebu.processors.consumer"
+        consumer_command = f"{python_cmd} -u -m nebu.processors.consumer"
         setup_commands = [
             f"{python_cmd} -m pip install dill pydantic redis nebu",  # Base deps
         ]
