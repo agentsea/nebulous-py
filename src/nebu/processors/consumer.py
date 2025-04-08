@@ -260,7 +260,7 @@ except ResponseError as e:
 
 
 # Function to process messages
-def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None:
+def process_message(message_id: str, message_data: Dict[str, str]) -> None:
     # Initialize variables that need to be accessible in the except block
     return_stream = None
     user_id = None
@@ -268,14 +268,11 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
     print(f"Message data inner: {message_data}")
 
     try:
-        # Extract the JSON string payload from the b'data' field
-        # Redis keys/fields might be bytes even with decode_responses=True
-        payload_str = message_data.get(b"data")
+        # Extract the JSON string payload from the 'data' field
+        payload_str = message_data.get("data")
 
-        # decode_responses=True should handle decoding, but Redis can be tricky.
-        # If errors persist, we might need to re-add explicit decode checks.
-        if not payload_str or not isinstance(payload_str, str):
-            # Add a more specific check if needed later based on runtime errors
+        # decode_responses=True should mean payload_str is a string if found.
+        if not payload_str:
             raise ValueError(
                 f"Missing or invalid 'data' field (expected string): {message_data}"
             )
@@ -308,10 +305,10 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
 
         # --- Health Check Logic based on kind ---
         if kind == "HealthCheck":
-            print(f"Received HealthCheck message {message_id.decode('utf-8')}")
+            print(f"Received HealthCheck message {message_id}")
             health_response = {
                 "kind": "StreamResponseMessage",  # Respond with a standard message kind
-                "id": message_id.decode("utf-8"),
+                "id": message_id,
                 "content": {"status": "healthy", "checked_message_id": msg_id},
                 "status": "success",
                 "created_at": datetime.now().isoformat(),
@@ -327,7 +324,7 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
             assert isinstance(REDIS_STREAM, str)
             assert isinstance(REDIS_CONSUMER_GROUP, str)
             r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
-            print(f"Acknowledged HealthCheck message {message_id.decode('utf-8')}")
+            print(f"Acknowledged HealthCheck message {message_id}")
             return  # Exit early for health checks
         # --- End Health Check Logic ---
 
@@ -413,7 +410,7 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
         # Prepare the response
         response = {
             "kind": "StreamResponseMessage",
-            "id": message_id.decode("utf-8"),
+            "id": message_id,
             "content": result,
             "status": "success",
             "created_at": datetime.now().isoformat(),
@@ -427,9 +424,7 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
             # Assert type again closer to usage for type checker clarity
             assert isinstance(return_stream, str)
             r.xadd(return_stream, {"data": json.dumps(response)})
-            print(
-                f"Processed message {message_id.decode('utf-8')}, result sent to {return_stream}"
-            )
+            print(f"Processed message {message_id}, result sent to {return_stream}")
 
         # Acknowledge the message
         # Assert types again closer to usage for type checker clarity
@@ -438,13 +433,13 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
         r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
 
     except Exception as e:
-        print(f"Error processing message {message_id.decode('utf-8')}: {e}")
+        print(f"Error processing message {message_id}: {e}")
         traceback.print_exc()
 
         # Prepare the error response
         error_response = {
             "kind": "StreamResponseMessage",
-            "id": message_id.decode("utf-8"),
+            "id": message_id,
             "content": {
                 "error": str(e),
                 "traceback": traceback.format_exc(),
