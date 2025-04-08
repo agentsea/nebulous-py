@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import socket
 import sys
 import time
 import traceback
@@ -8,6 +9,7 @@ from datetime import datetime
 from typing import Dict, TypeVar
 
 import redis
+import socks
 
 # Define TypeVar for generic models
 T = TypeVar("T")
@@ -220,13 +222,24 @@ if not all([REDIS_URL, REDIS_CONSUMER_GROUP, REDIS_STREAM]):
     print("Missing required Redis environment variables")
     sys.exit(1)
 
+# Configure SOCKS proxy before connecting to Redis
+# Use the proxy settings provided by tailscaled
+socks.set_default_proxy(socks.SOCKS5, "localhost", 1055)
+socket.socket = socks.socksocket
+print("Configured SOCKS5 proxy for socket connections via localhost:1055")
+
 # Connect to Redis
 try:
-    r = redis.from_url(REDIS_URL)
+    # Parse the Redis URL to handle potential credentials or specific DBs if needed
+    # Although from_url should work now with the patched socket
+    r = redis.from_url(
+        REDIS_URL, decode_responses=True
+    )  # Added decode_responses for convenience
+    r.ping()  # Test connection
     redis_info = REDIS_URL.split("@")[-1] if "@" in REDIS_URL else REDIS_URL
-    print(f"Connected to Redis at {redis_info}")
+    print(f"Connected to Redis via SOCKS proxy at {redis_info}")
 except Exception as e:
-    print(f"Failed to connect to Redis: {e}")
+    print(f"Failed to connect to Redis via SOCKS proxy: {e}")
     traceback.print_exc()
     sys.exit(1)
 
