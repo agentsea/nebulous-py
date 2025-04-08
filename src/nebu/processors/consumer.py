@@ -6,7 +6,7 @@ import sys
 import time
 import traceback
 from datetime import datetime
-from typing import Any, Dict, TypeVar, cast
+from typing import Dict, TypeVar
 
 import redis
 import socks
@@ -246,6 +246,9 @@ except Exception as e:
 
 # Create consumer group if it doesn't exist
 try:
+    # Assert types before use
+    assert isinstance(REDIS_STREAM, str)
+    assert isinstance(REDIS_CONSUMER_GROUP, str)
     r.xgroup_create(REDIS_STREAM, REDIS_CONSUMER_GROUP, id="0", mkstream=True)
     print(f"Created consumer group {REDIS_CONSUMER_GROUP} for stream {REDIS_STREAM}")
 except ResponseError as e:
@@ -262,14 +265,32 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
     return_stream = None
     user_id = None
 
-    try:
-        # Assign message_data directly to raw_payload.
-        # Cast to Dict[str, Any] to inform type checker of the expected type due to decode_responses=True.
-        raw_payload = cast(Dict[str, Any], message_data)
+    print(f"Message data inner: {message_data}")
 
-        # Validate that raw_payload is a dictionary as expected - Removed, cast handles this for type checker
-        # if not isinstance(raw_payload, dict):
-        #     raise TypeError(f"Expected message_data to be a dictionary, but got {type(raw_payload)}")
+    try:
+        # Extract the JSON string payload from the b'data' field
+        # Redis keys/fields might be bytes even with decode_responses=True
+        payload_str = message_data.get(b"data")
+
+        # decode_responses=True should handle decoding, but Redis can be tricky.
+        # If errors persist, we might need to re-add explicit decode checks.
+        if not payload_str or not isinstance(payload_str, str):
+            # Add a more specific check if needed later based on runtime errors
+            raise ValueError(
+                f"Missing or invalid 'data' field (expected string): {message_data}"
+            )
+
+        # Parse the JSON string into a dictionary
+        try:
+            raw_payload = json.loads(payload_str)
+        except json.JSONDecodeError as json_err:
+            raise ValueError(f"Failed to parse JSON payload: {json_err}") from json_err
+
+        # Validate that raw_payload is a dictionary as expected
+        if not isinstance(raw_payload, dict):
+            raise TypeError(
+                f"Expected parsed payload to be a dictionary, but got {type(raw_payload)}"
+            )
 
         print(f"Raw payload: {raw_payload}")
 
@@ -462,6 +483,7 @@ while True:
 
         # Read from stream with blocking
         streams = {REDIS_STREAM: ">"}  # '>' means read only new messages
+        # The type checker still struggles here, but the runtime types are asserted.
         messages = r.xreadgroup(  # type: ignore[arg-type]
             REDIS_CONSUMER_GROUP, consumer_name, streams, count=1, block=5000
         )
