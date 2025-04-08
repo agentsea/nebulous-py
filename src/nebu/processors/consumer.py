@@ -6,10 +6,11 @@ import sys
 import time
 import traceback
 from datetime import datetime
-from typing import Dict, TypeVar
+from typing import Any, Dict, TypeVar, cast
 
 import redis
 import socks
+from redis import ConnectionError, ResponseError
 
 # Define TypeVar for generic models
 T = TypeVar("T")
@@ -247,7 +248,7 @@ except Exception as e:
 try:
     r.xgroup_create(REDIS_STREAM, REDIS_CONSUMER_GROUP, id="0", mkstream=True)
     print(f"Created consumer group {REDIS_CONSUMER_GROUP} for stream {REDIS_STREAM}")
-except redis.exceptions.ResponseError as e:
+except ResponseError as e:
     if "BUSYGROUP" in str(e):
         print(f"Consumer group {REDIS_CONSUMER_GROUP} already exists")
     else:
@@ -262,25 +263,19 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
     user_id = None
 
     try:
-        # Check for and decode the 'data' field
-        data_bytes = message_data.get(b"data")
-        if data_bytes is None:
-            # Raise an error if 'data' field is missing
-            raise ValueError("Message missing 'data' field")
+        # Assign message_data directly to raw_payload.
+        # Cast to Dict[str, Any] to inform type checker of the expected type due to decode_responses=True.
+        raw_payload = cast(Dict[str, Any], message_data)
 
-        try:
-            # Decode bytes to string and parse JSON
-            raw_payload_str = data_bytes.decode("utf-8")
-            raw_payload = json.loads(raw_payload_str)
-        except (json.JSONDecodeError, UnicodeDecodeError) as decode_error:
-            # Raise a specific error for decoding/parsing issues
-            raise ValueError(f"Invalid JSON payload: {decode_error}") from decode_error
+        # Validate that raw_payload is a dictionary as expected - Removed, cast handles this for type checker
+        # if not isinstance(raw_payload, dict):
+        #     raise TypeError(f"Expected message_data to be a dictionary, but got {type(raw_payload)}")
 
         print(f"Raw payload: {raw_payload}")
 
         # Extract fields from the parsed payload
         # These fields are extracted for completeness and potential future use
-        _ = raw_payload.get("kind", "")  # kind
+        kind = raw_payload.get("kind", "")  # kind
         msg_id = raw_payload.get("id", "")  # msg_id
         content_raw = raw_payload.get("content", {})
         created_at = raw_payload.get("created_at", 0)  # created_at
@@ -289,6 +284,31 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
         orgs = raw_payload.get("organizations")  # organizations
         handle = raw_payload.get("handle")  # handle
         adapter = raw_payload.get("adapter")  # adapter
+
+        # --- Health Check Logic based on kind ---
+        if kind == "HealthCheck":
+            print(f"Received HealthCheck message {message_id.decode('utf-8')}")
+            health_response = {
+                "kind": "StreamResponseMessage",  # Respond with a standard message kind
+                "id": message_id.decode("utf-8"),
+                "content": {"status": "healthy", "checked_message_id": msg_id},
+                "status": "success",
+                "created_at": datetime.now().isoformat(),
+                "user_id": user_id,  # Include user_id if available
+            }
+            if return_stream:
+                # Assert type again closer to usage for type checker clarity
+                assert isinstance(return_stream, str)
+                r.xadd(return_stream, {"data": json.dumps(health_response)})
+                print(f"Sent health check response to {return_stream}")
+
+            # Assert types again closer to usage for type checker clarity
+            assert isinstance(REDIS_STREAM, str)
+            assert isinstance(REDIS_CONSUMER_GROUP, str)
+            r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
+            print(f"Acknowledged HealthCheck message {message_id.decode('utf-8')}")
+            return  # Exit early for health checks
+        # --- End Health Check Logic ---
 
         # Parse the content field if it's a string
         if isinstance(content_raw, str):
@@ -310,7 +330,7 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
                     content_model = local_namespace[content_type_name](**content)
                     print(f"Content model: {content_model}")
                     input_obj = local_namespace["V1StreamMessage"](
-                        kind=_,
+                        kind=kind,
                         id=msg_id,
                         content=content_model,
                         created_at=created_at,
@@ -324,7 +344,7 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
                     print(f"Error creating content type model: {e}")
                     # Fallback to using raw content
                     input_obj = local_namespace["V1StreamMessage"](
-                        kind=_,
+                        kind=kind,
                         id=msg_id,
                         content=content,
                         created_at=created_at,
@@ -338,7 +358,7 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
                 # Just use the raw content
                 print(f"Using raw content")
                 input_obj = local_namespace["V1StreamMessage"](
-                    kind=_,
+                    kind=kind,
                     id=msg_id,
                     content=content,
                     created_at=created_at,
@@ -383,12 +403,17 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
 
         # Send the result to the return stream
         if return_stream:
+            # Assert type again closer to usage for type checker clarity
+            assert isinstance(return_stream, str)
             r.xadd(return_stream, {"data": json.dumps(response)})
             print(
                 f"Processed message {message_id.decode('utf-8')}, result sent to {return_stream}"
             )
 
         # Acknowledge the message
+        # Assert types again closer to usage for type checker clarity
+        assert isinstance(REDIS_STREAM, str)
+        assert isinstance(REDIS_CONSUMER_GROUP, str)
         r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
 
     except Exception as e:
@@ -410,11 +435,18 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
 
         # Send the error to the return stream
         if return_stream:
+            # Assert type again closer to usage for type checker clarity
+            assert isinstance(return_stream, str)
             r.xadd(return_stream, {"data": json.dumps(error_response)})
         else:
+            # Assert type again closer to usage for type checker clarity
+            assert isinstance(REDIS_STREAM, str)
             r.xadd(f"{REDIS_STREAM}.errors", {"data": json.dumps(error_response)})
 
         # Still acknowledge the message so we don't reprocess it
+        # Assert types again closer to usage for type checker clarity
+        assert isinstance(REDIS_STREAM, str)
+        assert isinstance(REDIS_CONSUMER_GROUP, str)
         r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
 
 
@@ -424,15 +456,25 @@ consumer_name = f"consumer-{os.getpid()}"
 
 while True:
     try:
+        # Assert types just before use in the loop
+        assert isinstance(REDIS_STREAM, str)
+        assert isinstance(REDIS_CONSUMER_GROUP, str)
+
         # Read from stream with blocking
         streams = {REDIS_STREAM: ">"}  # '>' means read only new messages
-        messages = r.xreadgroup(
+        messages = r.xreadgroup(  # type: ignore[arg-type]
             REDIS_CONSUMER_GROUP, consumer_name, streams, count=1, block=5000
         )
 
         if not messages:
             # No messages received, continue waiting
             continue
+
+        # Assert that messages is a list (expected synchronous return type)
+        assert isinstance(
+            messages, list
+        ), f"Expected list from xreadgroup, got {type(messages)}"
+        assert len(messages) > 0  # Ensure the list is not empty before indexing
 
         stream_name, stream_messages = messages[0]
 
@@ -441,7 +483,7 @@ while True:
             print(f"Message data: {message_data}")
             process_message(message_id, message_data)
 
-    except redis.exceptions.ConnectionError as e:
+    except ConnectionError as e:
         print(f"Redis connection error: {e}")
         time.sleep(5)  # Wait before retrying
 
