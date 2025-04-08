@@ -262,15 +262,23 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
     user_id = None
 
     try:
-        # Get the message content from field 'data'
-        if b"data" not in message_data:
-            print(f"Message {message_id} has no 'data' field")
-            return
+        # Check for and decode the 'data' field
+        data_bytes = message_data.get(b"data")
+        if data_bytes is None:
+            # Raise an error if 'data' field is missing
+            raise ValueError("Message missing 'data' field")
 
-        # Parse the message data
-        raw_payload = json.loads(message_data[b"data"].decode("utf-8"))
+        try:
+            # Decode bytes to string and parse JSON
+            raw_payload_str = data_bytes.decode("utf-8")
+            raw_payload = json.loads(raw_payload_str)
+        except (json.JSONDecodeError, UnicodeDecodeError) as decode_error:
+            # Raise a specific error for decoding/parsing issues
+            raise ValueError(f"Invalid JSON payload: {decode_error}") from decode_error
 
-        # Extract fields from the Rust structure
+        print(f"Raw payload: {raw_payload}")
+
+        # Extract fields from the parsed payload
         # These fields are extracted for completeness and potential future use
         _ = raw_payload.get("kind", "")  # kind
         msg_id = raw_payload.get("id", "")  # msg_id
@@ -291,6 +299,8 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
         else:
             content = content_raw
 
+        print(f"Content: {content}")
+
         # For StreamMessage, construct the proper input object
         if is_stream_message and "V1StreamMessage" in local_namespace:
             # If we have a content type, try to construct it
@@ -298,6 +308,7 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
                 # Try to create the content type model first
                 try:
                     content_model = local_namespace[content_type_name](**content)
+                    print(f"Content model: {content_model}")
                     input_obj = local_namespace["V1StreamMessage"](
                         kind=_,
                         id=msg_id,
@@ -325,6 +336,7 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
                     )
             else:
                 # Just use the raw content
+                print(f"Using raw content")
                 input_obj = local_namespace["V1StreamMessage"](
                     kind=_,
                     id=msg_id,
@@ -348,9 +360,11 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
                 print(f"Error creating input model: {e}, using raw content")
                 input_obj = content
 
+        print(f"Input object: {input_obj}")
+
         # Execute the function
         result = target_function(input_obj)
-
+        print(f"Result: {result}")
         # If the result is a Pydantic model, convert to dict
         if hasattr(result, "model_dump"):
             result = result.model_dump()
@@ -364,6 +378,8 @@ def process_message(message_id: bytes, message_data: Dict[bytes, bytes]) -> None
             "created_at": datetime.now().isoformat(),
             "user_id": user_id,
         }
+
+        print(f"Response: {response}")
 
         # Send the result to the return stream
         if return_stream:
@@ -421,6 +437,8 @@ while True:
         stream_name, stream_messages = messages[0]
 
         for message_id, message_data in stream_messages:
+            print(f"Processing message {message_id}")
+            print(f"Message data: {message_data}")
             process_message(message_id, message_data)
 
     except redis.exceptions.ConnectionError as e:
