@@ -390,13 +390,14 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             # Otherwise use the param type directly
             try:
                 if param_type_name in local_namespace:
-                    input_obj = local_namespace[param_type_name](**content)
+                    print(f"Validating content against {param_type_name}")
+                    input_obj = local_namespace[param_type_name].model_validate(content)
                 else:
                     # If we can't find the exact type, just pass the content directly
                     input_obj = content
             except Exception as e:
                 print(f"Error creating input model: {e}, using raw content")
-                input_obj = content
+                raise e
 
         print(f"Input object: {input_obj}")
 

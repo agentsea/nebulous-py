@@ -9,4 +9,5 @@ from .containers.models import *
 from .meta import *
 from .processors.decorate import *
 from .processors.models import *
+from .processors.models import V1StreamMessage as Message
 from .processors.processor import *
