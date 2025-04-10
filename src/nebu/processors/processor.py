@@ -24,7 +24,6 @@ class Processor:
     def __init__(
         self,
         name: str,
-        stream: str,
         namespace: Optional[str] = None,
         labels: Optional[Dict[str, str]] = None,
         container: Optional[V1ContainerRequest] = None,
@@ -48,7 +47,6 @@ class Processor:
         self.name = name
         self.namespace = namespace
         self.labels = labels
-        self.stream = stream
         self.container = container
         self.schema_ = schema_
         self.common_schema = common_schema
@@ -123,7 +121,6 @@ class Processor:
             )
 
             update_processor = V1UpdateProcessor(
-                stream=stream,
                 container=container,
                 schema_=schema_,
                 common_schema=common_schema,
@@ -208,7 +205,6 @@ class Processor:
         out.namespace = namespace
 
         # Set specific fields from the processor
-        out.stream = processor_v1.stream
         out.container = processor_v1.container
         out.schema_ = processor_v1.schema_
         out.common_schema = processor_v1.common_schema

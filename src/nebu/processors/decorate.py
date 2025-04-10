@@ -27,8 +27,8 @@ from nebu.containers.models import (
 )
 from nebu.meta import V1ResourceMetaRequest
 from nebu.processors.models import (
+    Message,
     V1Scale,
-    V1StreamMessage,
 )
 from nebu.processors.processor import Processor
 
@@ -455,14 +455,12 @@ def processor(
         content_type = None
 
         # Check 1: Standard introspection
-        if origin is V1StreamMessage or (
+        if origin is Message or (
             origin is not None
-            and origin.__name__ == V1StreamMessage.__name__
-            and origin.__module__ == V1StreamMessage.__module__
+            and origin.__name__ == Message.__name__
+            and origin.__module__ == Message.__module__
         ):
-            print(
-                "[DEBUG Decorator] Input type identified as V1StreamMessage via get_origin."
-            )
+            print("[DEBUG Decorator] Input type identified as Message via get_origin.")
             is_stream_message = True
             if args:
                 content_type = args[0]
@@ -471,13 +469,11 @@ def processor(
                 )
             else:
                 print(
-                    "[DEBUG Decorator] V1StreamMessage detected, but no generic arguments found via get_args."
+                    "[DEBUG Decorator] Message detected, but no generic arguments found via get_args."
                 )
         # Check 2: Direct type check
-        elif isinstance(param_type, type) and param_type is V1StreamMessage:
-            print(
-                "[DEBUG Decorator] Input type identified as direct V1StreamMessage type."
-            )
+        elif isinstance(param_type, type) and param_type is Message:
+            print("[DEBUG Decorator] Input type identified as direct Message type.")
             is_stream_message = True
         # Check 3: Regex fallback on string representation
         elif origin is None:
@@ -486,13 +482,11 @@ def processor(
             )
             # Use param_type_str_repr in match calls
             generic_match = re.match(
-                r"^<class '(?:[a-zA-Z0-9_.]+\.)?V1StreamMessage\[(.+?)\]'>$",
+                r"^<class '(?:[a-zA-Z0-9_.]+\.)?Message\[(.+?)\]'>$",
                 param_type_str_repr,
             )
             if generic_match:
-                print(
-                    "[DEBUG Decorator] Regex matched generic V1StreamMessage pattern!"
-                )
+                print("[DEBUG Decorator] Regex matched generic Message pattern!")
                 is_stream_message = True
                 content_type_name_str = generic_match.group(1).strip()
                 print(
@@ -517,21 +511,21 @@ def processor(
             else:
                 # Use param_type_str_repr in match calls
                 simple_match = re.match(
-                    r"^<class '(?:[a-zA-Z0-9_.]+\.)?V1StreamMessage'>$",
+                    r"^<class '(?:[a-zA-Z0-9_.]+\.)?Message'>$",
                     param_type_str_repr,
                 )
                 if simple_match:
                     print(
-                        "[DEBUG Decorator] Regex identified direct V1StreamMessage (no generic) from string."
+                        "[DEBUG Decorator] Regex identified direct Message (no generic) from string."
                     )
                     is_stream_message = True
                 else:
                     print(
-                        f"[DEBUG Decorator] Regex did not match V1StreamMessage pattern for string '{param_type_str_repr}'. Assuming not StreamMessage."
+                        f"[DEBUG Decorator] Regex did not match Message pattern for string '{param_type_str_repr}'. Assuming not StreamMessage."
                     )
         else:
             print(
-                f"[DEBUG Decorator] Input parameter '{param_name}' type ({param_type_str_repr}) identified as non-StreamMessage type (origin was not None and not V1StreamMessage)."
+                f"[DEBUG Decorator] Input parameter '{param_name}' type ({param_type_str_repr}) identified as non-StreamMessage type (origin was not None and not Message)."
             )
 
         print(
@@ -645,8 +639,8 @@ def processor(
         input_model_source = None
         output_model_source = None
         content_type_source = None
-        print("[DEBUG Decorator] Getting base V1StreamMessage source...")
-        stream_message_source = get_type_source(V1StreamMessage, notebook_code)
+        print("[DEBUG Decorator] Getting base Message source...")
+        stream_message_source = get_type_source(Message, notebook_code)
 
         if is_stream_message:
             print(
@@ -804,7 +798,6 @@ def processor(
 
         processor_instance = Processor(
             name=processor_name,
-            stream=processor_name,
             namespace=namespace,
             labels=labels,
             container=container_request,
@@ -818,6 +811,7 @@ def processor(
         print(
             f"[DEBUG Decorator] Processor instance '{processor_name}' created successfully."
         )
+        processor_instance.original_func = func
         return processor_instance
 
     return decorator

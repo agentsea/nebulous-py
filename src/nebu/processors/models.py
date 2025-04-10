@@ -94,6 +94,18 @@ class V1StreamData(BaseModel):
     wait: Optional[bool] = None
 
 
+class Message(BaseModel, Generic[T]):
+    kind: str = "Message"
+    id: str
+    content: Optional[T] = None
+    created_at: int
+    return_stream: Optional[str] = None
+    user_id: Optional[str] = None
+    orgs: Optional[Any] = None
+    handle: Optional[str] = None
+    adapter: Optional[str] = None
+
+
 class V1StreamMessage(BaseModel, Generic[T]):
     kind: str = "StreamMessage"
     id: str

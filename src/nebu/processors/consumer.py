@@ -138,9 +138,9 @@ try:
     if stream_message_source:
         try:
             exec(stream_message_source, local_namespace)
-            print("Successfully defined V1StreamMessage class")
+            print("Successfully defined Message class")
         except Exception as e:
-            print(f"Error defining V1StreamMessage: {e}")
+            print(f"Error defining Message: {e}")
             traceback.print_exc()
 
     # Define content type if available
@@ -264,9 +264,6 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
     # Initialize variables that need to be accessible in the except block
     return_stream = None
     user_id = None
-
-    print(f"Message data inner: {message_data}")
-
     try:
         # Extract the JSON string payload from the 'data' field
         payload_str = message_data.get("data")
@@ -340,14 +337,14 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         print(f"Content: {content}")
 
         # For StreamMessage, construct the proper input object
-        if is_stream_message and "V1StreamMessage" in local_namespace:
+        if is_stream_message and "Message" in local_namespace:
             # If we have a content type, try to construct it
             if content_type_name and content_type_name in local_namespace:
                 # Try to create the content type model first
                 try:
                     content_model = local_namespace[content_type_name](**content)
                     print(f"Content model: {content_model}")
-                    input_obj = local_namespace["V1StreamMessage"](
+                    input_obj = local_namespace["Message"](
                         kind=kind,
                         id=msg_id,
                         content=content_model,
@@ -361,7 +358,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 except Exception as e:
                     print(f"Error creating content type model: {e}")
                     # Fallback to using raw content
-                    input_obj = local_namespace["V1StreamMessage"](
+                    input_obj = local_namespace["Message"](
                         kind=kind,
                         id=msg_id,
                         content=content,
@@ -374,8 +371,8 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                     )
             else:
                 # Just use the raw content
-                print(f"Using raw content")
-                input_obj = local_namespace["V1StreamMessage"](
+                print("Using raw content")
+                input_obj = local_namespace["Message"](
                     kind=kind,
                     id=msg_id,
                     content=content,

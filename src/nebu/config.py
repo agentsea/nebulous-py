@@ -32,7 +32,7 @@ class GlobalConfig:
     @classmethod
     def read(cls) -> GlobalConfig:
         """
-        Read the config from ~/.agentsea/nebu.yaml, or create a default if it doesn’t exist.
+        Read the config from ~/.agentsea/nebu.yaml, or create a default if it doesn't exist.
         Then ensure that we either find or create a matching server from environment variables,
         and set that as the `current_server` if relevant (mimicking the Rust logic).
         """
@@ -78,7 +78,7 @@ class GlobalConfig:
                 # Ensure it has a name, so we can set current_server to it
                 if found_server.name is None:
                     found_server.name = server_name
-                # Use that server’s name as current
+                # Use that server's name as current
                 config.current_server = found_server.name
             else:
                 # Create a new server entry
@@ -133,3 +133,39 @@ def _get_config_file_path() -> str:
     home = os.path.expanduser("~")
     config_dir = os.path.join(home, ".agentsea")
     return os.path.join(config_dir, "nebu.yaml")
+
+
+@dataclass
+class ContainerConfig:
+    """
+    Configuration loaded from environment variables inside the container.
+    """
+
+    api_key: Optional[str] = None
+    server: Optional[str] = None
+    namespace: Optional[str] = None
+    name: Optional[str] = None
+    container_id: Optional[str] = None
+    date: Optional[str] = None
+    hf_home: Optional[str] = None
+    namespace_volume_uri: Optional[str] = None
+    name_volume_uri: Optional[str] = None
+    ts_authkey: Optional[str] = None
+
+    @classmethod
+    def from_env(cls) -> ContainerConfig:
+        """
+        Load configuration from environment variables.
+        """
+        return cls(
+            api_key=os.environ.get("NEBU_API_KEY"),
+            server=os.environ.get("NEBU_SERVER"),
+            namespace=os.environ.get("NEBU_NAMESPACE"),
+            name=os.environ.get("NEBU_NAME"),
+            container_id=os.environ.get("NEBU_CONTAINER_ID"),
+            date=os.environ.get("NEBU_DATE"),
+            hf_home=os.environ.get("HF_HOME"),
+            namespace_volume_uri=os.environ.get("NAMESPACE_VOLUME_URI"),
+            name_volume_uri=os.environ.get("NAME_VOLUME_URI"),
+            ts_authkey=os.environ.get("TS_AUTHKEY"),
+        )

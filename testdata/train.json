@@ -1,0 +1,10 @@
+{
+    "dataset": "123abc",
+    "model": "unsloth/Qwen2.5-VL-32B-Instruct",
+    "max_length": 65536,
+    "epochs": 1,
+    "batch_size": 2,
+    "gradient_accumulation_steps": 4,
+    "learning_rate": 2e-4,
+    "continue_latest": true
+}

@@ -33,3 +33,18 @@ def get_user_profile(api_key: str) -> V1UserProfile:
     response.raise_for_status()
 
     return V1UserProfile.model_validate(response.json())
+
+
+def is_allowed(
+    resource_owner: str,
+    user_id: Optional[str] = None,
+    orgs: Optional[Dict[str, Dict[str, str]]] = None,
+) -> bool:
+    if orgs is None:
+        orgs = {}
+    owners = []
+    for org_id, _ in orgs.items():
+        owners.append(org_id)
+    if user_id:
+        owners.append(user_id)
+    return resource_owner in owners
