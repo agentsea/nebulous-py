@@ -9,7 +9,7 @@ from PIL import Image, UnidentifiedImageError
 
 
 def convert_to_unsloth_inference(
-    old_schema: Dict[str, Any],
+    old_schema: List[Dict[str, Any]],
 ) -> Tuple[List[Dict[str, Any]], List[Image.Image]]:
     """
     Convert from an old OpenAI message format that may look like:
@@ -74,11 +74,16 @@ def convert_to_unsloth_inference(
         # regardless of how many images were found, and merges all text into one block.
         new_content = []
         if image_urls:
-            new_content.append({"type": "image"})
+            # Add image placeholders for each image found
+            for _ in image_urls:
+                new_content.append({"type": "image"})
         if merged_text:
             new_content.append({"type": "text", "text": merged_text})
 
-        new_schema.append({"role": role, "content": new_content})
+        # Check if there's any content to add
+        if new_content:
+            new_schema.append({"role": role, "content": new_content})
+        # else: Optionally handle cases where a message might become empty
 
     return new_schema, all_images
 
@@ -93,19 +98,22 @@ def oai_to_unsloth(
     (typical in JSON Lines format) to the Nebulous conversation format.
     Images specified by URLs or base64 strings are loaded into PIL.Image objects.
 
-    Input format example (as dict from JSON line):
     {
         "messages": [
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_text", "text": "Describe the image."},
-                    {"type": "input_image", "image_url": "http://... or base64 string"},
+                    {
+                        "type": "text",
+                        "text": "Who is this an image of?"
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://upload.wikimedia.org/wikipedia/commons/5/57/Abraham_Lincoln_1863_Portrait_%283x4_cropped%29.jpg"
+                        }
+                    }
                 ]
-            },
-            {
-                "role": "assistant",
-                "content": [{"type": "text", "text": "This is an image of..."}] # Or potentially just a string
             }
         ]
     }
@@ -146,6 +154,7 @@ def oai_to_unsloth(
 
         role = message.get("role")
         input_content = message.get("content")  # Can be list or string
+        image_url_top_level = message.get("image_url")  # Check for top-level image_url
 
         processed_content = []
 
@@ -163,41 +172,59 @@ def oai_to_unsloth(
                     "image",
                 ):  # Accept 'image' as source key too
                     # Use "image_url" first, then fallback to "image" if needed
-                    image_source = item.get("image_url", item.get("image"))
-                    if image_source:
+                    image_source_value = item.get("image_url", item.get("image"))
+                    image_url_to_load = None
+                    pil_image_to_load = None
+
+                    if item_type == "image_url" and isinstance(
+                        image_source_value, dict
+                    ):
+                        # Handle nested {"url": "..."}
+                        image_url_to_load = image_source_value.get("url")
+                    elif isinstance(image_source_value, str):
+                        # Handle direct URL string or base64 string
+                        image_url_to_load = image_source_value  # Could be URL or base64
+                    elif isinstance(image_source_value, Image.Image):
+                        # Handle direct PIL image
+                        pil_image_to_load = image_source_value
+
+                    if pil_image_to_load:  # If we already have a PIL image
+                        processed_content.append(
+                            {"type": "image", "image": pil_image_to_load}
+                        )
+                    elif (
+                        image_url_to_load
+                    ):  # If we have a URL or base64 string to process
                         pil_image = None
                         try:
-                            if isinstance(
-                                image_source, str
-                            ) and image_source.startswith(("http://", "https://")):
+                            if image_url_to_load.startswith(("http://", "https://")):
                                 # Handle URL
-                                response = requests.get(image_source, stream=True)
+                                response = requests.get(image_url_to_load, stream=True)
                                 response.raise_for_status()  # Raise an exception for bad status codes
                                 pil_image = Image.open(response.raw)
-                            elif isinstance(image_source, str):
+                            else:  # Assume base64
                                 # Handle base64 string
                                 # Remove potential data URI prefix (e.g., "data:image/png;base64,")
-                                if "," in image_source:
-                                    image_source = image_source.split(",", 1)[1]
-                                image_bytes = base64.b64decode(image_source)
+                                if "," in image_url_to_load:
+                                    image_url_to_load = image_url_to_load.split(",", 1)[
+                                        1
+                                    ]
+                                image_bytes = base64.b64decode(image_url_to_load)
                                 pil_image = Image.open(io.BytesIO(image_bytes))
-
-                            elif isinstance(image_source, Image.Image):
-                                # Handle direct PIL.Image input
-                                pil_image = image_source
 
                             if pil_image:
                                 processed_content.append(
                                     {"type": "image", "image": pil_image}
                                 )
                             else:
+                                # This condition might be less likely now with the separated logic
                                 print(
-                                    f"Warning: Could not load image from source: {type(image_source)}"
+                                    f"Warning: Could not load image from source: {type(image_url_to_load)}"
                                 )
 
                         except requests.exceptions.RequestException as e:
                             print(
-                                f"Warning: Failed to fetch image from URL {image_source}: {e}"
+                                f"Warning: Failed to fetch image from URL {image_url_to_load}: {e}"
                             )
                         except (binascii.Error, ValueError) as e:
                             print(f"Warning: Failed to decode base64 image string: {e}")
@@ -210,7 +237,7 @@ def oai_to_unsloth(
 
                     else:
                         print(
-                            "Warning: Image item provided but 'image_url' or 'image' key is missing or empty."
+                            "Warning: Image item provided but could not resolve image source (URL, base64, or PIL Image)."
                         )
 
                 # Add handling for other potential input types if necessary
@@ -218,6 +245,43 @@ def oai_to_unsloth(
             # Handle simple string content (common for assistant messages)
             processed_content.append({"type": "text", "text": input_content})
         # else: Handle unexpected content format (e.g., log warning, skip message)
+
+        # Handle potential top-level image_url (after processing content)
+        if image_url_top_level and isinstance(image_url_top_level, str):
+            pil_image = None
+            try:
+                if image_url_top_level.startswith(("http://", "https://")):
+                    # Handle URL
+                    response = requests.get(image_url_top_level, stream=True)
+                    response.raise_for_status()  # Raise an exception for bad status codes
+                    pil_image = Image.open(response.raw)
+                else:
+                    # Assume base64 string if not URL (could refine this check)
+                    # Remove potential data URI prefix
+                    if "," in image_url_top_level:
+                        image_url_top_level = image_url_top_level.split(",", 1)[1]
+                    image_bytes = base64.b64decode(image_url_top_level)
+                    pil_image = Image.open(io.BytesIO(image_bytes))
+
+                if pil_image:
+                    processed_content.append({"type": "image", "image": pil_image})
+                else:
+                    print(
+                        f"Warning: Could not load image from top-level source: {type(image_url_top_level)}"
+                    )
+
+            except requests.exceptions.RequestException as e:
+                print(
+                    f"Warning: Failed to fetch top-level image from URL {image_url_top_level}: {e}"
+                )
+            except (binascii.Error, ValueError) as e:
+                print(f"Warning: Failed to decode top-level base64 image string: {e}")
+            except (IOError, UnidentifiedImageError) as e:
+                print(f"Warning: Failed to open top-level image: {e}")
+            except Exception as e:
+                print(
+                    f"Warning: An unexpected error occurred while processing top-level image: {e}"
+                )
 
         if role and processed_content:
             nebu_conversation.append({"role": role, "content": processed_content})
