@@ -9,3 +9,8 @@ class Adapter(BaseModel):
     uri: str
     base_model: str
     owner: str
+    epochs_trained: int = Field(default=0)
+    last_trained: int = Field(default=0)
+    lora_rank: int = Field(default=8)
+    lora_alpha: int = Field(default=16)
+    lora_dropout: float = Field(default=0.1)

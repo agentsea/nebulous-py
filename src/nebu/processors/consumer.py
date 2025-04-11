@@ -479,6 +479,7 @@ while True:
         # Read from stream with blocking
         streams = {REDIS_STREAM: ">"}  # '>' means read only new messages
         # The type checker still struggles here, but the runtime types are asserted.
+        print("reading from stream...")
         messages = r.xreadgroup(  # type: ignore[arg-type]
             REDIS_CONSUMER_GROUP, consumer_name, streams, count=1, block=5000
         )

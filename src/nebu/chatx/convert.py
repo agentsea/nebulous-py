@@ -7,6 +7,11 @@ from typing import Any, Dict, List, Tuple
 import requests
 from PIL import Image, UnidentifiedImageError
 
+# Define a standard User-Agent header
+REQUESTS_HEADERS = {
+    "User-Agent": "Nebulous-py/0.1 (https://github.com/agentsea/nebulous-py; contact@agentsea.ai)"
+}
+
 
 def convert_to_unsloth_inference(
     old_schema: List[Dict[str, Any]],
@@ -63,7 +68,7 @@ def convert_to_unsloth_inference(
         # Convert each URL into a PIL image
         for url in image_urls:
             # Download the image
-            response = requests.get(url)
+            response = requests.get(url, headers=REQUESTS_HEADERS)
             response.raise_for_status()
             image_data = BytesIO(response.content)
             pil_img = Image.open(image_data).convert("RGB")
@@ -199,7 +204,11 @@ def oai_to_unsloth(
                         try:
                             if image_url_to_load.startswith(("http://", "https://")):
                                 # Handle URL
-                                response = requests.get(image_url_to_load, stream=True)
+                                response = requests.get(
+                                    image_url_to_load,
+                                    stream=True,
+                                    headers=REQUESTS_HEADERS,
+                                )
                                 response.raise_for_status()  # Raise an exception for bad status codes
                                 pil_image = Image.open(response.raw)
                             else:  # Assume base64
@@ -252,7 +261,9 @@ def oai_to_unsloth(
             try:
                 if image_url_top_level.startswith(("http://", "https://")):
                     # Handle URL
-                    response = requests.get(image_url_top_level, stream=True)
+                    response = requests.get(
+                        image_url_top_level, stream=True, headers=REQUESTS_HEADERS
+                    )
                     response.raise_for_status()  # Raise an exception for bad status codes
                     pil_image = Image.open(response.raw)
                 else:
