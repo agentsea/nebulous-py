@@ -147,11 +147,11 @@ class Processor:
         if not self.processor or not self.processor.metadata.name:
             raise ValueError("Processor not found")
 
-        url = f"{self.processors_url}/{self.processor.metadata.namespace}/{self.processor.metadata.name}/send"
+        url = f"{self.processors_url}/{self.processor.metadata.namespace}/{self.processor.metadata.name}/messages"
 
-        response = requests.get(
+        response = requests.post(
             url,
-            params=data,
+            json=data,
             headers={"Authorization": f"Bearer {self.api_key}"},
         )
         response.raise_for_status()
