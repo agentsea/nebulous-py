@@ -342,7 +342,9 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             if content_type_name and content_type_name in local_namespace:
                 # Try to create the content type model first
                 try:
-                    content_model = local_namespace[content_type_name](**content)
+                    content_model = local_namespace[content_type_name].model_validate(
+                        content
+                    )
                     print(f"Content model: {content_model}")
                     input_obj = local_namespace["Message"](
                         kind=kind,

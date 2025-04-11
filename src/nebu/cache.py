@@ -25,29 +25,42 @@ class Cache:
         Initializes the Redis connection.
         Pulls connection details from environment variables REDIS_HOST,
         REDIS_PORT, and REDIS_DB if available, otherwise uses defaults.
+        Also checks for REDIS_URL and prefers that if set.
         """
-        redis_host = os.environ.get("REDIS_HOST", host)
-        redis_port = int(os.environ.get("REDIS_PORT", port))
-        redis_db = int(os.environ.get("REDIS_DB", db))
+        redis_url = os.environ.get("REDIS_URL")
         namespace = os.environ.get("NEBU_NAMESPACE")
         if not namespace:
             raise ValueError("NEBU_NAMESPACE environment variable is not set")
 
+        self.redis_client = None
+        connection_info = ""
+
         try:
-            # decode_responses=True ensures keys and values are returned as strings
-            self.redis_client = redis.StrictRedis(
-                host=redis_host, port=redis_port, db=redis_db, decode_responses=True
-            )
+            if redis_url:
+                # Use REDIS_URL if available
+                self.redis_client = redis.StrictRedis.from_url(
+                    redis_url, decode_responses=True
+                )
+                connection_info = f"URL {redis_url}"
+            else:
+                # Fallback to individual host, port, db
+                redis_host = os.environ.get("REDIS_HOST", host)
+                redis_port = int(os.environ.get("REDIS_PORT", port))
+                redis_db = int(os.environ.get("REDIS_DB", db))
+                self.redis_client = redis.StrictRedis(
+                    host=redis_host, port=redis_port, db=redis_db, decode_responses=True
+                )
+                connection_info = f"{redis_host}:{redis_port}/{redis_db}"
+
             # Ping the server to ensure connection is established
             self.redis_client.ping()
-            print(
-                f"Successfully connected to Redis at {redis_host}:{redis_port}/{redis_db}"
-            )
+            print(f"Successfully connected to Redis using {connection_info}")
 
             self.prefix = f"cache:{namespace}"
         except Exception as e:
             print(f"Error connecting to Redis: {e}")
-            self.redis_client = None  # Set client to None if connection fails
+            # Ensure client is None if connection fails at any point
+            self.redis_client = None
 
     def get(self, key: str) -> str | None:
         """

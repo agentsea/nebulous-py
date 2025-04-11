@@ -9,7 +9,7 @@ from PIL import Image, UnidentifiedImageError
 
 
 def convert_to_unsloth_inference(
-    old_schema: List[Dict[str, Any]],
+    old_schema: Dict[str, Any],
 ) -> Tuple[List[Dict[str, Any]], List[Image.Image]]:
     """
     Convert from an old OpenAI message format that may look like:
@@ -84,26 +84,31 @@ def convert_to_unsloth_inference(
 
 
 def oai_to_unsloth(
-    messages_input: List[Dict[str, Any]],
+    messages_input: Dict[
+        str, Any
+    ],  # Assume input is always dict like {'messages': [...]}
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Converts a list of messages from an OpenAI-like chat format to the Nebulous conversation format.
+    Converts messages from a JSON object containing a 'messages' key
+    (typical in JSON Lines format) to the Nebulous conversation format.
     Images specified by URLs or base64 strings are loaded into PIL.Image objects.
 
-    Input format example:
-    [
-        {
-            "role": "user",
-            "content": [
-                {"type": "input_text", "text": "Describe the image."},
-                {"type": "input_image", "image_url": "http://... or base64 string"},
-            ]
-        },
-        {
-            "role": "assistant",
-            "content": [{"type": "text", "text": "This is an image of..."}] # Or potentially just a string
-        }
-    ]
+    Input format example (as dict from JSON line):
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Describe the image."},
+                    {"type": "input_image", "image_url": "http://... or base64 string"},
+                ]
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "This is an image of..."}] # Or potentially just a string
+            }
+        ]
+    }
 
     Output format example:
     {
@@ -122,8 +127,23 @@ def oai_to_unsloth(
         ]
     }
     """
+    # Directly extract the list of messages, assuming input structure
+    messages_to_process = messages_input.get("messages", [])
+
+    # Validate that 'messages' key contained a list
+    if not isinstance(messages_to_process, list):
+        print(
+            f"Warning: Input dict provided, but 'messages' key does not contain a list: {type(messages_to_process)}. Returning empty."
+        )
+        return {"messages": []}
+
     nebu_conversation = []
-    for message in messages_input:
+    for message in messages_to_process:  # Use the extracted list
+        # Add check here for robustness against malformed items *within* the list
+        if not isinstance(message, dict):
+            print(f"Warning: Skipping non-dictionary item in message list: {message!r}")
+            continue
+
         role = message.get("role")
         input_content = message.get("content")  # Can be list or string
 

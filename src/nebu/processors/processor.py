@@ -12,6 +12,7 @@ from nebu.processors.models import (
     V1Processors,
     V1ProcessorScaleRequest,
     V1Scale,
+    V1StreamData,
     V1UpdateProcessor,
 )
 
@@ -140,7 +141,7 @@ class Processor:
             patch_response.raise_for_status()
             print(f"Updated Processor {self.processor.metadata.name}")
 
-    def send(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def send(self, data: Dict[str, Any], wait: bool = False) -> Dict[str, Any]:
         """
         Send data to the processor.
         """
@@ -149,9 +150,14 @@ class Processor:
 
         url = f"{self.processors_url}/{self.processor.metadata.namespace}/{self.processor.metadata.name}/messages"
 
+        stream_data = V1StreamData(
+            content=data,
+            wait=wait,
+        )
+
         response = requests.post(
             url,
-            json=data,
+            json=stream_data.model_dump(exclude_none=True),
             headers={"Authorization": f"Bearer {self.api_key}"},
         )
         response.raise_for_status()
