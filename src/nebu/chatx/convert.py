@@ -299,3 +299,64 @@ def oai_to_unsloth(
         # else: Handle missing role or empty content if needed
 
     return {"messages": nebu_conversation}
+
+
+def oai_to_qwen(
+    messages_input: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Convert from an OpenAI message format to a format where image URLs
+    are kept as strings.
+
+    Input format example:
+    [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "some text"},
+                {"type": "image_url", "image_url": {"url": "https://..."}},
+            ],
+        }
+    ]
+
+    Output format example:
+    [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "some text"},
+                {"type": "image", "image": "https://..."},
+            ],
+        }
+    ]
+    """
+    new_schema = []
+    for message in messages_input:
+        role = message.get("role")
+        input_content = message.get("content")
+
+        if not isinstance(role, str) or not isinstance(input_content, list):
+            # Skip malformed messages
+            print(f"Warning: Skipping malformed message: {message!r}")
+            continue
+
+        processed_content = []
+        for item in input_content:
+            item_type = item.get("type")
+            if item_type == "text":
+                text = item.get("text", "")
+                processed_content.append({"type": "text", "text": text})
+            elif item_type == "image_url":
+                image_url_dict = item.get("image_url", {})
+                url = image_url_dict.get("url")
+                if url:
+                    processed_content.append({"type": "image", "image": url})
+                else:
+                    print(f"Warning: image_url item missing 'url': {item!r}")
+            # else: Handle or ignore other types if necessary
+
+        if role and processed_content:
+            new_schema.append({"role": role, "content": processed_content})
+        # else: Handle cases with missing role or empty resulting content if needed
+
+    return new_schema
