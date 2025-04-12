@@ -352,6 +352,7 @@ def processor(
     python_cmd: str = "python",
     no_delete: bool = False,
     include: Optional[List[Any]] = None,
+    before_func: Optional[Callable[[], None]] = None,
 ):
     def decorator(
         func: Callable[[Any], Any],
@@ -538,7 +539,7 @@ def processor(
             "[DEBUG Decorator] Validating parameter and return types are BaseModel subclasses..."
         )
 
-        def check_basemodel(type_to_check, desc):
+        def check_basemodel(type_to_check: Optional[Any], desc: str):
             print(
                 f"[DEBUG Decorator] check_basemodel: Checking {desc} - Type: {type_to_check}"
             )
@@ -633,6 +634,74 @@ def processor(
         print(f"[DEBUG Decorator] Final function source obtained for '{processor_name}' (len: {len(function_source)}). Source starts:\n-------\
 {function_source[:250]}...\n-------")
         # --- End Function Source ---
+
+        # --- Get Before Function Source (if provided) ---
+        before_func_source = None
+        before_func_name = None
+        if before_func:
+            print(f"[DEBUG Decorator] Processing before_func: {before_func.__name__}")
+            before_func_name = before_func.__name__
+            # Validate signature (must take no arguments)
+            before_sig = inspect.signature(before_func)
+            if len(before_sig.parameters) != 0:
+                raise TypeError(
+                    f"before_func '{before_func_name}' must take zero parameters"
+                )
+
+            # Try to get source using similar logic as the main function
+            before_explicit_source = getattr(
+                before_func, _NEBU_EXPLICIT_SOURCE_ATTR, None
+            )
+            if before_explicit_source:
+                print(
+                    f"[DEBUG Decorator] Using explicit source (@include) for before_func {before_func_name}"
+                )
+                before_func_source = before_explicit_source
+            elif in_jupyter and notebook_code:
+                print(
+                    f"[DEBUG Decorator] Attempting notebook history extraction for before_func '{before_func_name}'..."
+                )
+                before_func_source = extract_definition_source_from_string(
+                    notebook_code, before_func_name, ast.FunctionDef
+                )
+                if before_func_source:
+                    print(
+                        f"[DEBUG Decorator] Found before_func '{before_func_name}' source in notebook history."
+                    )
+                else:
+                    print(
+                        f"[DEBUG Decorator] Failed to find before_func '{before_func_name}' in notebook history, falling back to dill."
+                    )
+
+            if before_func_source is None:
+                print(
+                    f"[DEBUG Decorator] Using dill fallback for before_func '{before_func_name}'..."
+                )
+                try:
+                    raw_before_func_source = dill.source.getsource(before_func)
+                    before_func_source = textwrap.dedent(raw_before_func_source)
+                    print(
+                        f"[DEBUG Decorator] Successfully got source via dill for '{before_func_name}'."
+                    )
+                except (IOError, TypeError, OSError) as e:
+                    print(
+                        f"[DEBUG Decorator] Dill fallback failed for '{before_func_name}': {e}"
+                    )
+                    # Raise error if we couldn't get the source by any means
+                    raise ValueError(
+                        f"Could not retrieve source for before_func '{before_func_name}': {e}"
+                    ) from e
+
+            if before_func_source is None:  # Final check
+                raise ValueError(
+                    f"Failed to obtain source code for before_func '{before_func_name}' using any method."
+                )
+            print(
+                f"[DEBUG Decorator] Final before_func source obtained for '{before_func_name}'."
+            )
+        else:
+            print("[DEBUG Decorator] No before_func provided.")
+        # --- End Before Function Source ---
 
         # --- Get Model Sources ---
         print("[DEBUG Decorator] Getting model sources...")
@@ -745,6 +814,14 @@ def processor(
         add_source_to_env("OUTPUT_MODEL", output_model_source)
         add_source_to_env("CONTENT_TYPE", content_type_source)
         add_source_to_env("STREAM_MESSAGE", stream_message_source)
+
+        # Add before_func source if available
+        if before_func_source and before_func_name:
+            print(
+                f"[DEBUG Decorator] Adding BEFORE_FUNC env vars for {before_func_name}"
+            )
+            all_env.append(V1EnvVar(key="BEFORE_FUNC_SOURCE", value=before_func_source))
+            all_env.append(V1EnvVar(key="BEFORE_FUNC_NAME", value=before_func_name))
 
         print("[DEBUG Decorator] Adding type info env vars...")
         all_env.append(V1EnvVar(key="PARAM_TYPE_STR", value=param_type_str_repr))

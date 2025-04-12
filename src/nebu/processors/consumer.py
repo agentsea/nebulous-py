@@ -28,6 +28,10 @@ try:
     return_type_name = os.environ.get("RETURN_TYPE_NAME")
     content_type_name = os.environ.get("CONTENT_TYPE_NAME")
 
+    # Get before_func source if provided
+    before_func_source = os.environ.get("BEFORE_FUNC_SOURCE")
+    before_func_name = os.environ.get("BEFORE_FUNC_NAME")
+
     # Check for generic type arguments
     input_model_args = []
     output_model_args = []
@@ -210,6 +214,21 @@ try:
         print(f"Error creating function from source: {e}")
         traceback.print_exc()
         sys.exit(1)
+
+    # Execute before_func if provided
+    if before_func_source and before_func_name:
+        print(f"Executing before_func: {before_func_name}...")
+        try:
+            exec(before_func_source, local_namespace)
+            before_function = local_namespace[before_func_name]
+            before_function()  # Call the function
+            print(f"Successfully executed before_func: {before_func_name}")
+        except Exception as e:
+            print(f"Error executing before_func '{before_func_name}': {e}")
+            traceback.print_exc()
+            # Decide if failure is critical. For now, let's exit.
+            print("Exiting due to before_func failure.")
+            sys.exit(1)
 
 except Exception as e:
     print(f"Error setting up function: {e}")

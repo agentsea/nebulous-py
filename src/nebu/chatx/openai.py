@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Literal, Optional, Union
 
-from pydantic import AnyUrl, BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
 class FunctionDefinition(BaseModel):
@@ -151,7 +151,7 @@ class ChatCompletionRequestMessageContentPartFile(BaseModel):
 
 
 class ImageUrl(BaseModel):
-    url: AnyUrl = Field(
+    url: str = Field(
         ..., description="Either a URL of the image or the base64 encoded image data."
     )
     detail: str | None = Field(

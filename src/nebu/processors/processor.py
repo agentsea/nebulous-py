@@ -157,7 +157,7 @@ class Processor:
 
         response = requests.post(
             url,
-            json=stream_data.model_dump(exclude_none=True),
+            json=stream_data.model_dump(mode="json", exclude_none=True),
             headers={"Authorization": f"Bearer {self.api_key}"},
         )
         response.raise_for_status()
