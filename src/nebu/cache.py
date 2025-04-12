@@ -1,8 +1,10 @@
 import os
+import socket  # Add socket import
 import time
 from typing import Any, Optional, cast
 
 import redis
+import socks  # Add socks import
 from pydantic import BaseModel, Field
 
 
@@ -28,12 +30,26 @@ class Cache:
         Also checks for REDIS_URL and prefers that if set.
         """
         redis_url = os.environ.get("REDIS_URL")
+        print("REDIS_URL: ", redis_url)
         namespace = os.environ.get("NEBU_NAMESPACE")
         if not namespace:
             raise ValueError("NEBU_NAMESPACE environment variable is not set")
-
+        print("NAMESPACE: ", namespace)
         self.redis_client = None
         connection_info = ""
+
+        # Configure SOCKS proxy before connecting to Redis
+        try:
+            # Use the proxy settings provided by tailscaled
+            socks.set_default_proxy(socks.SOCKS5, "localhost", 1055)
+            socket.socket = socks.socksocket
+            print("Configured SOCKS5 proxy for socket connections via localhost:1055")
+        except Exception as proxy_err:
+            print(f"Failed to configure SOCKS proxy: {proxy_err}")
+            # Depending on requirements, you might want to raise an error here
+            # or proceed without the proxy if it's optional.
+            # For now, we'll print the error and continue, but the Redis connection
+            # will likely fail if the proxy is required.
 
         try:
             if redis_url:
@@ -57,6 +73,7 @@ class Cache:
             print(f"Successfully connected to Redis using {connection_info}")
 
             self.prefix = f"cache:{namespace}"
+            print("using prefix", self.prefix)
         except Exception as e:
             print(f"Error connecting to Redis: {e}")
             # Ensure client is None if connection fails at any point
