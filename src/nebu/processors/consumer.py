@@ -99,6 +99,8 @@ try:
     exec("T = TypeVar('T')", local_namespace)
     exec("from nebu.processors.models import *", local_namespace)
     exec("from nebu.processors.processor import *", local_namespace)
+    # Add import for chatx openai types
+    exec("from nebu.chatx.openai import *", local_namespace)
 
     # Execute included object sources FIRST, as they might define types needed by others
     print("[Consumer] Executing included object sources...")
