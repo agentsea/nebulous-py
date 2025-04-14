@@ -1,6 +1,6 @@
 [project]
 name = "nebu"
-version = "0.1.40"
+version = "0.1.41"
 description = "A globally distributed container runtime"
 readme = "README.md"
 requires-python = ">=3.10.14"
@@ -10,7 +10,6 @@ dependencies = [
     "openai>=1.68.2",
     "pillow>=11.1.0",
     "pydantic>=2.10.6",
-    "pydantic-ai-slim[openai]>=0.0.55",
     "pysocks>=1.7.1",
     "pyyaml>=6.0.2",
     "redis[socks]>=5.0",
@@ -23,9 +22,11 @@ dev = [
     "ipykernel>=6.29.5",
     "nbformat>=5.10.4",
     "notebook>=7.3.3",
+    "peft>=0.15.1",
     "pytest>=8.3.5",
     "qwen-vl-utils>=0.0.10",
     "trl>=0.16.1",
+    "wandb>=0.19.9",
 ]
 
 [tool.pyright]

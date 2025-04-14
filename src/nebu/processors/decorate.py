@@ -1,5 +1,6 @@
 import ast  # For parsing notebook code
 import inspect
+import os  # Add os import
 import re  # Import re for fallback check
 import textwrap
 from typing import (
@@ -39,6 +40,8 @@ R = TypeVar("R", bound=BaseModel)
 
 # Attribute name for explicitly stored source
 _NEBU_EXPLICIT_SOURCE_ATTR = "_nebu_explicit_source"
+# Environment variable to prevent decorator recursion inside consumer
+_NEBU_INSIDE_CONSUMER_ENV_VAR = "_NEBU_INSIDE_CONSUMER_EXEC"
 
 # --- Jupyter Helper Functions ---
 
@@ -356,7 +359,17 @@ def processor(
 ):
     def decorator(
         func: Callable[[Any], Any],
-    ) -> Processor:
+    ) -> Processor | Callable[[Any], Any]:  # Return type can now be original func
+        # --- Prevent Recursion Guard ---
+        # If this env var is set, we are inside the consumer's exec context.
+        # Return the original function without applying the decorator again.
+        if os.environ.get(_NEBU_INSIDE_CONSUMER_ENV_VAR) == "1":
+            print(
+                f"[DEBUG Decorator] Guard triggered for '{func.__name__}'. Returning original function."
+            )
+            return func
+        # --- End Guard ---
+
         # Moved init print here
         print(
             f"[DEBUG Decorator Init] @processor decorating function '{func.__name__}'"
@@ -832,6 +845,33 @@ def processor(
         all_env.append(V1EnvVar(key="MODULE_NAME", value=func.__module__))
         print("[DEBUG Decorator] Finished populating environment variables.")
         # --- End Environment Variables ---
+
+        # --- Get Decorated Function's File Source ---
+        print("[DEBUG Decorator] Getting source file for decorated function...")
+        func_file_source = None
+        try:
+            func_file_path = inspect.getfile(func)
+            print(f"[DEBUG Decorator] Found file path: {func_file_path}")
+            with open(func_file_path, "r") as f:
+                func_file_source = f.read()
+            print(
+                f"[DEBUG Decorator] Successfully read source file: {func_file_path} (len: {len(func_file_source)})"
+            )
+            all_env.append(
+                V1EnvVar(key="DECORATED_FUNC_FILE_SOURCE", value=func_file_source)
+            )
+            print("[DEBUG Decorator] Added DECORATED_FUNC_FILE_SOURCE to env.")
+        except (TypeError, OSError) as e:
+            # TypeError: If func is a built-in or C function
+            # OSError: If the file cannot be opened
+            print(
+                f"Warning: Could not read source file for {processor_name}: {e}. Definitions in that file might be unavailable in the consumer."
+            )
+        except Exception as e:
+            print(
+                f"Warning: An unexpected error occurred while reading source file for {processor_name}: {e}"
+            )
+        # --- End Decorated Function's File Source ---
 
         # --- Final Setup ---
         print("[DEBUG Decorator] Preparing final Processor object...")

@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 import requests
+from pydantic import BaseModel
 
 from nebu.auth import get_user_profile
 from nebu.config import GlobalConfig
@@ -141,7 +142,13 @@ class Processor:
             patch_response.raise_for_status()
             print(f"Updated Processor {self.processor.metadata.name}")
 
-    def send(self, data: Dict[str, Any], wait: bool = False) -> Dict[str, Any]:
+    def __call__(self, data: BaseModel, wait: bool = False) -> Dict[str, Any]:
+        """
+        Allows the Processor instance to be called like a function, sending data.
+        """
+        return self.send(data=data, wait=wait)
+
+    def send(self, data: BaseModel, wait: bool = False) -> Dict[str, Any]:
         """
         Send data to the processor.
         """

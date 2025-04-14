@@ -15,6 +15,9 @@ from redis import ConnectionError, ResponseError
 # Define TypeVar for generic models
 T = TypeVar("T")
 
+# Environment variable name used as a guard in the decorator
+_NEBU_INSIDE_CONSUMER_ENV_VAR = "_NEBU_INSIDE_CONSUMER_EXEC"
+
 # Get function and model source code and create them dynamically
 try:
     function_source = os.environ.get("FUNCTION_SOURCE")
@@ -26,7 +29,14 @@ try:
     is_stream_message = os.environ.get("IS_STREAM_MESSAGE") == "True"
     param_type_name = os.environ.get("PARAM_TYPE_NAME")
     return_type_name = os.environ.get("RETURN_TYPE_NAME")
+    param_type_str = os.environ.get("PARAM_TYPE_STR")
+    return_type_str = os.environ.get("RETURN_TYPE_STR")
     content_type_name = os.environ.get("CONTENT_TYPE_NAME")
+
+    # Get source for the file containing the decorated function
+    decorated_func_file_source = os.environ.get("DECORATED_FUNC_FILE_SOURCE")
+    # Get sources for the directory containing the decorated function
+    # decorated_dir_sources_json = os.environ.get("DECORATED_DIR_SOURCES") # Removed
 
     # Get init_func source if provided
     init_func_source = os.environ.get("INIT_FUNC_SOURCE")
@@ -103,135 +113,189 @@ try:
     exec("T = TypeVar('T')", local_namespace)
     exec("from nebu.processors.models import *", local_namespace)
     exec("from nebu.processors.processor import *", local_namespace)
+    # Add import for the processor decorator itself
+    exec("from nebu.processors.decorate import processor", local_namespace)
     # Add import for chatx openai types
     exec("from nebu.chatx.openai import *", local_namespace)
 
-    # Execute included object sources FIRST, as they might define types needed by others
-    print("[Consumer] Executing included object sources...")
-    for i, (obj_source, args_sources) in enumerate(included_object_sources):
-        try:
-            exec(obj_source, local_namespace)
-            print(f"[Consumer] Successfully executed included object {i} base source")
-            for j, arg_source in enumerate(args_sources):
-                try:
-                    exec(arg_source, local_namespace)
-                    print(
-                        f"[Consumer] Successfully executed included object {i} arg {j} source"
-                    )
-                except Exception as e:
-                    print(f"Error executing included object {i} arg {j} source: {e}")
-                    traceback.print_exc()
-        except Exception as e:
-            print(f"Error executing included object {i} base source: {e}")
-            traceback.print_exc()
-    print("[Consumer] Finished executing included object sources.")
+    # Set the guard environment variable before executing any source code
+    os.environ[_NEBU_INSIDE_CONSUMER_ENV_VAR] = "1"
+    print(f"[Consumer] Set environment variable {_NEBU_INSIDE_CONSUMER_ENV_VAR}=1")
 
-    # First try to import the module to get any needed dependencies
-    # This is a fallback in case the module is available
-    module_name = os.environ.get("MODULE_NAME")
     try:
-        if module_name:
-            exec(f"import {module_name}", local_namespace)
-            print(f"Successfully imported module {module_name}")
-    except Exception as e:
-        print(f"Warning: Could not import module {module_name}: {e}")
-        print(
-            "This is expected if running in a Jupyter notebook. Will use dynamic execution."
-        )
-
-    # Define the models
-    # First define stream message class if needed
-    if stream_message_source:
-        try:
-            exec(stream_message_source, local_namespace)
-            print("Successfully defined Message class")
-        except Exception as e:
-            print(f"Error defining Message: {e}")
-            traceback.print_exc()
-
-    # Define content type if available
-    if content_type_source:
-        try:
-            exec(content_type_source, local_namespace)
-            print(f"Successfully defined content type {content_type_name}")
-
-            # Define any content type args
-            for arg_source in content_type_args:
-                try:
-                    exec(arg_source, local_namespace)
-                    print("Successfully defined content type argument")
-                except Exception as e:
-                    print(f"Error defining content type argument: {e}")
-                    traceback.print_exc()
-        except Exception as e:
-            print(f"Error defining content type: {e}")
-            traceback.print_exc()
-
-    # Define input model if different from stream message
-    if input_model_source and (
-        not is_stream_message or input_model_source != stream_message_source
-    ):
-        try:
-            exec(input_model_source, local_namespace)
-            print(f"Successfully defined input model {param_type_name}")
-
-            # Define any input model args
-            for arg_source in input_model_args:
-                try:
-                    exec(arg_source, local_namespace)
-                    print("Successfully defined input model argument")
-                except Exception as e:
-                    print(f"Error defining input model argument: {e}")
-                    traceback.print_exc()
-        except Exception as e:
-            print(f"Error defining input model: {e}")
-            traceback.print_exc()
-
-    # Define output model
-    if output_model_source:
-        try:
-            exec(output_model_source, local_namespace)
-            print(f"Successfully defined output model {return_type_name}")
-
-            # Define any output model args
-            for arg_source in output_model_args:
-                try:
-                    exec(arg_source, local_namespace)
-                    print("Successfully defined output model argument")
-                except Exception as e:
-                    print(f"Error defining output model argument: {e}")
-                    traceback.print_exc()
-        except Exception as e:
-            print(f"Error defining output model: {e}")
-            traceback.print_exc()
-
-    # Finally, execute the function code
-    try:
-        exec(function_source, local_namespace)
-        target_function = local_namespace[function_name]
-        print(f"Successfully loaded function {function_name}")
-    except Exception as e:
-        print(f"Error creating function from source: {e}")
-        traceback.print_exc()
-        sys.exit(1)
-
-    # Execute init_func if provided
-    if init_func_source and init_func_name:
-        print(f"Executing init_func: {init_func_name}...")
-        try:
-            exec(init_func_source, local_namespace)
-            init_function = local_namespace[init_func_name]
+        # Execute the source file of the decorated function FIRST
+        if decorated_func_file_source:
+            print("[Consumer] Executing decorated function's file source...")
+            try:
+                exec(decorated_func_file_source, local_namespace)
+                print(
+                    "[Consumer] Successfully executed decorated function's file source."
+                )
+            except Exception as e:
+                print(f"Error executing decorated function's file source: {e}")
+                traceback.print_exc()  # Warn and continue
+        else:
             print(
-                f"[Consumer] Environment before calling init_func {init_func_name}: {os.environ}"
+                "[Consumer] No decorated function's file source found in environment."
             )
-            init_function()  # Call the function
-            print(f"Successfully executed init_func: {init_func_name}")
+
+        # Execute the sources from the decorated function's directory
+        # if decorated_dir_sources_json:
+        #     print("[Consumer] Executing decorated function's directory sources...")
+        #     try:
+        #         dir_sources = json.loads(decorated_dir_sources_json)
+        #         # Sort by relative path for some predictability (e.g., __init__.py first)
+        #         for rel_path, source_code in sorted(dir_sources.items()):
+        #             print(f"[Consumer] Executing source from: {rel_path}...")
+        #             try:
+        #                 exec(source_code, local_namespace)
+        #                 print(f"[Consumer] Successfully executed source from: {rel_path}")
+        #             except Exception as e:
+        #                 print(f"Error executing source from {rel_path}: {e}")
+        #                 traceback.print_exc() # Warn and continue
+        #     except json.JSONDecodeError as e:
+        #         print(f"Error decoding DECORATED_DIR_SOURCES JSON: {e}")
+        #         traceback.print_exc()
+        #     except Exception as e:
+        #         print(f"Unexpected error processing directory sources: {e}")
+        #         traceback.print_exc()
+        # else:
+        #     print("[Consumer] No decorated function's directory sources found in environment.")
+
+        # Execute included object sources NEXT, as they might define types needed by others
+        print("[Consumer] Executing included object sources...")
+        for i, (obj_source, args_sources) in enumerate(included_object_sources):
+            try:
+                exec(obj_source, local_namespace)
+                print(
+                    f"[Consumer] Successfully executed included object {i} base source"
+                )
+                for j, arg_source in enumerate(args_sources):
+                    try:
+                        exec(arg_source, local_namespace)
+                        print(
+                            f"[Consumer] Successfully executed included object {i} arg {j} source"
+                        )
+                    except Exception as e:
+                        print(
+                            f"Error executing included object {i} arg {j} source: {e}"
+                        )
+                        traceback.print_exc()
+            except Exception as e:
+                print(f"Error executing included object {i} base source: {e}")
+                traceback.print_exc()
+        print("[Consumer] Finished executing included object sources.")
+
+        # First try to import the module to get any needed dependencies
+        # This is a fallback in case the module is available
+        module_name = os.environ.get("MODULE_NAME")
+        try:
+            if module_name:
+                exec(f"import {module_name}", local_namespace)
+                print(f"Successfully imported module {module_name}")
         except Exception as e:
-            print(f"Error executing init_func '{init_func_name}': {e}")
+            print(f"Warning: Could not import module {module_name}: {e}")
+            print(
+                "This is expected if running in a Jupyter notebook. Will use dynamic execution."
+            )
+
+        # Define the models
+        # First define stream message class if needed
+        if stream_message_source:
+            try:
+                exec(stream_message_source, local_namespace)
+                print("Successfully defined Message class")
+            except Exception as e:
+                print(f"Error defining Message: {e}")
+                traceback.print_exc()
+
+        # Define content type if available
+        if content_type_source:
+            try:
+                exec(content_type_source, local_namespace)
+                print(f"Successfully defined content type {content_type_name}")
+
+                # Define any content type args
+                for arg_source in content_type_args:
+                    try:
+                        exec(arg_source, local_namespace)
+                        print("Successfully defined content type argument")
+                    except Exception as e:
+                        print(f"Error defining content type argument: {e}")
+                        traceback.print_exc()
+            except Exception as e:
+                print(f"Error defining content type: {e}")
+                traceback.print_exc()
+
+        # Define input model if different from stream message
+        if input_model_source and (
+            not is_stream_message or input_model_source != stream_message_source
+        ):
+            try:
+                exec(input_model_source, local_namespace)
+                print(f"Successfully defined input model {param_type_str}")
+
+                # Define any input model args
+                for arg_source in input_model_args:
+                    try:
+                        exec(arg_source, local_namespace)
+                        print("Successfully defined input model argument")
+                    except Exception as e:
+                        print(f"Error defining input model argument: {e}")
+                        traceback.print_exc()
+            except Exception as e:
+                print(f"Error defining input model: {e}")
+                traceback.print_exc()
+
+        # Define output model
+        if output_model_source:
+            try:
+                exec(output_model_source, local_namespace)
+                print(f"Successfully defined output model {return_type_str}")
+
+                # Define any output model args
+                for arg_source in output_model_args:
+                    try:
+                        exec(arg_source, local_namespace)
+                        print("Successfully defined output model argument")
+                    except Exception as e:
+                        print(f"Error defining output model argument: {e}")
+                        traceback.print_exc()
+            except Exception as e:
+                print(f"Error defining output model: {e}")
+                traceback.print_exc()
+
+        # Finally, execute the function code
+        try:
+            exec(function_source, local_namespace)
+            target_function = local_namespace[function_name]
+            print(f"Successfully loaded function {function_name}")
+        except Exception as e:
+            print(f"Error creating function from source: {e}")
             traceback.print_exc()
-            # Decide if failure is critical. For now, let's exit.
-            print("Exiting due to init_func failure.")
             sys.exit(1)
+
+        # Execute init_func if provided
+        if init_func_source and init_func_name:
+            print(f"Executing init_func: {init_func_name}...")
+            try:
+                exec(init_func_source, local_namespace)
+                init_function = local_namespace[init_func_name]
+                print(
+                    f"[Consumer] Environment before calling init_func {init_func_name}: {os.environ}"
+                )
+                init_function()  # Call the function
+                print(f"Successfully executed init_func: {init_func_name}")
+            except Exception as e:
+                print(f"Error executing init_func '{init_func_name}': {e}")
+                traceback.print_exc()
+                # Decide if failure is critical. For now, let's exit.
+                print("Exiting due to init_func failure.")
+                sys.exit(1)
+    finally:
+        # Unset the guard environment variable after all execs are done
+        os.environ.pop(_NEBU_INSIDE_CONSUMER_ENV_VAR, None)
+        print(f"[Consumer] Unset environment variable {_NEBU_INSIDE_CONSUMER_ENV_VAR}")
 
 except Exception as e:
     print(f"Error setting up function: {e}")
@@ -412,9 +476,9 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         else:
             # Otherwise use the param type directly
             try:
-                if param_type_name in local_namespace:
-                    print(f"Validating content against {param_type_name}")
-                    input_obj = local_namespace[param_type_name].model_validate(content)
+                if param_type_str in local_namespace:
+                    print(f"Validating content against {param_type_str}")
+                    input_obj = local_namespace[param_type_str].model_validate(content)
                 else:
                     # If we can't find the exact type, just pass the content directly
                     input_obj = content
