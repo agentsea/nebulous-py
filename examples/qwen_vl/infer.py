@@ -5,8 +5,12 @@ from nebu import Adapter, Message, processor
 from nebu.chatx.openai import (
     ChatCompletionChoice,
     ChatCompletionRequest,
+    ChatCompletionRequestMessageContentPartImage,
+    ChatCompletionRequestMessageContentPartText,
+    ChatCompletionRequestUserMessage,
     ChatCompletionResponse,
     ChatCompletionResponseMessage,
+    ImageUrl,
 )
 
 setup_script = """
@@ -22,6 +26,8 @@ def init():
     from dataclasses import dataclass
     from typing import Dict, Optional
 
+    from nebu import Cache
+
     @dataclass
     class InferenceState:
         base_model_raw: Qwen2_5_VLForConditionalGeneration
@@ -29,6 +35,7 @@ def init():
         peft_model: Optional[PeftModel]
         base_model_id: str
         adapters: Dict[str, Adapter]
+        cache: Cache
 
     base_model_id = "Qwen/Qwen2.5-VL-7B-Instruct"
 
@@ -53,6 +60,7 @@ def init():
         peft_model=None,
         base_model_id=base_model_id,
         adapters={},
+        cache=Cache(),
     )
 
 
@@ -101,20 +109,17 @@ def infer_qwen_vl(
             f"Adapter '{adapter_name_to_load}' not loaded locally. Attempting to load."
         )
 
-        mock_adapter_uri = f"s3://your-bucket/path/to/adapters/{adapter_name_to_load}"
-        mock_base_model = "Qwen/Qwen-VL-Chat"
-        mock_owner = "user_or_org_id"
-        print(
-            f"WARNING: Using mock adapter data for '{adapter_name_to_load}'. Replace with actual retrieval."
-        )
-        val = Adapter(
-            name=adapter_name_to_load,
-            uri=mock_adapter_uri,
-            base_model=mock_base_model,
-            owner=mock_owner,
-            created_at=int(time.time()),
-        )
+        # Fetch adapter details from cache instead of using mocks
+        print("checking cache for adapter", f"'adapters:{adapter_name_to_load}'")
+        val_raw = state.cache.get(f"adapters:{adapter_name_to_load}")
+        if not val_raw:
+            raise ValueError(f"Adapter '{adapter_name_to_load}' not found in cache.")
 
+        print("val_raw", val_raw)
+        val = Adapter.model_validate_json(val_raw)
+        print("found adapter in cache", val)
+
+        # Validate ownership and base model compatibility
         if not is_allowed(val.owner, message.user_id, message.orgs):
             raise ValueError(
                 f"User not allowed to use adapter '{adapter_name_to_load}'"
@@ -125,6 +130,7 @@ def infer_qwen_vl(
                 f"Adapter base model '{val.base_model}' does not match loaded base model '{state.base_model_id}'"
             )
 
+        # Download and load the adapter
         adapter_path = f"./adapters/{adapter_name_to_load}"
         bucket = Bucket()
         print("copying adapter", val.uri, adapter_path)
@@ -243,3 +249,46 @@ def infer_qwen_vl(
     print(f"Total time: {time.time() - full_time} seconds")
 
     return response
+
+
+if __name__ == "__main__":
+    # {"messages":[{"role":"user","content":[{"type":"text","text":"Who is this an image of?"},{"type":"image_url","image_url":{"url":"https://storage.googleapis.com/orign/testdata/nebu/blinken.jpg"}}]}, {"role":"assistant","content":[{"type":"text","text":"Bill Clinton"}]} ]}
+    # req = ChatCompletionRequest(
+    #     model="bar3",
+    #     messages=[
+    #         ChatCompletionRequestUserMessage(
+    #             role="user",
+    #             content=[
+    #                 ChatCompletionRequestMessageContentPartText(
+    #                     type="text", text="Who is this an image of?"
+    #                 ),
+    #                 ChatCompletionRequestMessageContentPartImage(
+    #                     type="image_url",
+    #                     image_url=ImageUrl(
+    #                         url="https://storage.googleapis.com/orign/testdata/nebu/blinken.jpg"
+    #                     ),
+    #                 ),
+    #             ],
+    #         ),
+    #     ],
+    # )
+    req = ChatCompletionRequest(
+        model="bar3",
+        messages=[
+            ChatCompletionRequestUserMessage(
+                role="user",
+                content=[
+                    ChatCompletionRequestMessageContentPartText(
+                        type="text", text="What's in this image?"
+                    ),
+                    ChatCompletionRequestMessageContentPartImage(
+                        type="image_url",
+                        image_url=ImageUrl(
+                            url="https://storage.googleapis.com/orign/testdata/nebu/golden.jpeg"
+                        ),
+                    ),
+                ],
+            ),
+        ],
+    )
+    infer_qwen_vl(req)

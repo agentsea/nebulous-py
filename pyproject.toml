@@ -25,6 +25,7 @@ dev = [
     "peft>=0.15.1",
     "pytest>=8.3.5",
     "qwen-vl-utils>=0.0.10",
+    "torchvision>=0.21.0",
     "trl>=0.16.1",
     "wandb>=0.19.9",
 ]

@@ -17,3 +17,4 @@ class Adapter(BaseModel):
     lora_dropout: float = Field(default=0.1)
     lora_target_modules: List[str] = Field(default=[])
     learning_rate: float = Field(default=0.0001)
+    examples_trained: int = Field(default=0)
