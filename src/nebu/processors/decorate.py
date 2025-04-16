@@ -878,15 +878,32 @@ def processor(
         metadata = V1ResourceMetaRequest(
             name=processor_name, namespace=namespace, labels=labels
         )
-        consumer_command = f"{python_cmd} -u -m nebu.processors.consumer"
-        setup_commands = [
-            f"{python_cmd} -m pip install dill pydantic redis nebu",  # Base deps
+        # Separate the final execution command from setup
+        consumer_module = "nebu.processors.consumer"
+        if "accelerate launch" in python_cmd:
+            # python_cmd is the launcher prefix (e.g., "accelerate launch")
+            # Append the module flag and the module name.
+            # Remove -u as accelerate likely handles buffering.
+            consumer_execution_command = f"{python_cmd.strip()} -m {consumer_module}"
+        else:
+            # Assume python_cmd is just the interpreter (e.g., "python")
+            consumer_execution_command = f"{python_cmd} -u -m {consumer_module}"
+
+        # Build setup commands list - run these with standard python/shell
+        setup_commands_list = [
+            "python -m pip install dill pydantic redis nebu",  # Base deps (use standard python)
         ]
         if setup_script:
-            print("[DEBUG Decorator] Adding setup script to command.")
-            setup_commands.append(f"\n{setup_script}\n")
-        setup_commands.append(consumer_command)
-        final_command = "\n".join(setup_commands)
+            print("[DEBUG Decorator] Adding setup script to setup commands.")
+            # Add setup script as raw commands
+            setup_commands_list.append(setup_script.strip())
+
+        # Combine setup commands and the final execution command
+        all_commands = setup_commands_list + [consumer_execution_command]
+        final_command = "\n\n".join(
+            all_commands
+        )  # Use double newline for clarity in logs
+
         print(
             f"[DEBUG Decorator] Final container command:\n-------\n{final_command}\n-------"
         )
