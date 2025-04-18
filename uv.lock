@@ -1623,7 +1623,7 @@ wheels = [
 
 [[package]]
 name = "nebu"
-version = "0.1.41"
+version = "0.1.43"
 source = { virtual = "." }
 dependencies = [
     { name = "boto3" },
@@ -1660,7 +1660,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "pysocks", specifier = ">=1.7.1" },
     { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "redis", extras = ["socks"], specifier = ">=5.0" },
+    { name = "redis", specifier = ">=5.0" },
     { name = "requests", specifier = ">=2.32.3" },
 ]
 
