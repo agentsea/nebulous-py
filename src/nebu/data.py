@@ -116,14 +116,35 @@ def _parse_s3_path(path: str) -> Tuple[Optional[str], Optional[str]]:
 class Bucket:
     """Handles interactions with AWS S3."""
 
-    def __init__(self, verbose: bool = True):
+    def __init__(
+        self,
+        verbose: bool = True,
+        aws_access_key_id: Optional[str] = None,
+        aws_secret_access_key: Optional[str] = None,
+        aws_session_token: Optional[str] = None,
+    ):
         """
-        Initializes the S3 handler.
+        Initializes the S3 handler. Can use default credentials or provided temporary ones.
 
         Args:
             verbose (bool): If True, prints status messages. Defaults to True.
+            aws_access_key_id (Optional[str]): Temporary AWS Access Key ID.
+            aws_secret_access_key (Optional[str]): Temporary AWS Secret Access Key.
+            aws_session_token (Optional[str]): Temporary AWS Session Token (required if keys are temporary).
         """
-        self.client = boto3.client("s3")
+        if aws_access_key_id and aws_secret_access_key:
+            if verbose:
+                print("Initializing S3 client with provided temporary credentials.")
+            self.client = boto3.client(
+                "s3",
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                aws_session_token=aws_session_token,  # Pass session token if provided
+            )
+        else:
+            if verbose:
+                print("Initializing S3 client with default credentials.")
+            self.client = boto3.client("s3")
         self.verbose = verbose
 
     def _parse_path(self, path: str) -> Tuple[Optional[str], Optional[str]]:
