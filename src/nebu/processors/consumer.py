@@ -6,7 +6,7 @@ import socket
 import sys
 import time
 import traceback
-import types  # Added for ModuleType
+import types
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 
@@ -350,7 +350,9 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
     user_id = None
     try:
         payload_str = message_data.get("data")
-        if not payload_str or not isinstance(payload_str, str):
+        if (
+            not payload_str
+        ):  # Covers None and empty string, isinstance check is redundant
             raise ValueError(
                 f"Missing or invalid 'data' field (expected non-empty string): {message_data}"
             )
@@ -724,13 +726,13 @@ try:
             assert isinstance(REDIS_STREAM, str)
             assert isinstance(REDIS_CONSUMER_GROUP, str)
 
-            # Simplified xreadgroup call - redis-py handles encoding now
+            streams_arg: Dict[str, str] = {REDIS_STREAM: ">"}
+
             # With decode_responses=True, redis-py expects str types here
-            streams_arg = {REDIS_STREAM: ">"}
             messages = r.xreadgroup(
                 REDIS_CONSUMER_GROUP,
                 consumer_name,
-                streams_arg,
+                streams_arg,  # type: ignore[arg-type]
                 count=1,
                 block=5000,  # Use milliseconds for block
             )

@@ -1,11 +1,7 @@
 import ast  # For parsing notebook code
 import inspect
-import json  # Add json import
-import os  # Add os import
-import re  # Import re for fallback check
-import tempfile  # Add tempfile import
+import os
 import textwrap
-import uuid  # Add uuid import
 from typing import (
     Any,
     Callable,
@@ -17,15 +13,15 @@ from typing import (
     get_origin,
     get_type_hints,
 )
-from urllib.parse import urlparse  # Add urlparse import
+from urllib.parse import urlparse
 
-import dill  # Add dill import
-import requests  # Add requests import
-from botocore.exceptions import ClientError  # Import ClientError
+import dill
+import requests
+from botocore.exceptions import ClientError
 from pydantic import BaseModel
 
-from nebu.auth import get_user_profile  # Import get_user_profile
-from nebu.config import GlobalConfig  # Add this import
+from nebu.auth import get_user_profile
+from nebu.config import GlobalConfig
 from nebu.containers.models import (
     V1AuthzConfig,
     V1ContainerHealthCheck,
@@ -38,7 +34,7 @@ from nebu.containers.models import (
     V1VolumeDriver,
     V1VolumePath,
 )
-from nebu.data import Bucket  # Import Bucket
+from nebu.data import Bucket
 from nebu.meta import V1ResourceMetaRequest
 from nebu.processors.models import (
     Message,
@@ -82,7 +78,7 @@ def is_jupyter_notebook():
         import IPython  # Now safe to import
 
         ip = IPython.get_ipython()
-        if ip is None:
+        if ip is None:  # type: ignore
             # print("[DEBUG Helper] is_jupyter_notebook: No IPython instance found.")
             return False
         class_name = str(ip.__class__)
@@ -93,7 +89,9 @@ def is_jupyter_notebook():
         # print("[DEBUG Helper] is_jupyter_notebook: Not Jupyter (IPython instance found, but not ZMQInteractiveShell).")
         return False
     except Exception as e:
-        # print(f"[DEBUG Helper] is_jupyter_notebook: Exception occurred: {e}") # Reduce verbosity
+        print(
+            f"[DEBUG Helper] is_jupyter_notebook: Exception occurred: {e}"
+        )  # Reduce verbosity
         return False
 
 
@@ -164,9 +162,10 @@ def extract_definition_source_from_string(
             found_in_cell = False
             for node in ast.walk(tree):
                 if (
-                    isinstance(node, def_type)
-                    and hasattr(node, "name")
-                    and node.name == def_name
+                    isinstance(
+                        node, def_type
+                    )  # Check if it's the right type (FuncDef or ClassDef)
+                    and getattr(node, "name", None) == def_name  # Safely check name
                 ):
                     print(
                         f"[DEBUG Helper] extract: Found node for '{def_name}' in cell #{cell_num}."
@@ -189,6 +188,8 @@ def extract_definition_source_from_string(
                         end_lineno = getattr(node, "end_lineno", start_lineno + 1)
 
                         if hasattr(node, "decorator_list") and node.decorator_list:
+                            # Ensure it's a node type that *can* have decorators
+                            # FunctionDef and ClassDef have decorator_list
                             first_decorator_start_line = (
                                 getattr(
                                     node.decorator_list[0], "lineno", start_lineno + 1
@@ -605,21 +606,38 @@ def processor(
                         # print(f"[DEBUG Decorator] Added string source to env for included obj: {obj_name_str}")
                     elif isinstance(obj_source, tuple):
                         # Handle tuple source (origin, args) - assumes get_model_source/get_type_source logic
-                        origin_src, arg_srcs = obj_source
-                        if origin_src and isinstance(origin_src, str):
-                            all_env.append(
-                                V1EnvVar(key=f"{env_key_base}_SOURCE", value=origin_src)
-                            )
-                        for j, arg_src in enumerate(arg_srcs):
-                            if isinstance(arg_src, str):
+                        # Ensure obj_source is indeed a tuple before unpacking
+                        if len(obj_source) == 2:
+                            # Now safe to unpack
+                            origin_src, arg_srcs = obj_source
+                            # type: ignore[misc] # Suppress persistent tuple unpacking error
+                            if origin_src and isinstance(origin_src, str):
                                 all_env.append(
                                     V1EnvVar(
-                                        key=f"{env_key_base}_ARG_{j}_SOURCE",
-                                        value=arg_src,
+                                        key=f"{env_key_base}_SOURCE", value=origin_src
                                     )
                                 )
-                            # Handle nested tuples if necessary, or keep it simple
-                        # print(f"[DEBUG Decorator] Added tuple source to env for included obj: {obj_name_str}")
+                            # Handle arg_srcs (this part seems okay)
+                            if isinstance(arg_srcs, list):
+                                for j, arg_src in enumerate(arg_srcs):
+                                    if isinstance(arg_src, str):
+                                        all_env.append(
+                                            V1EnvVar(
+                                                key=f"{env_key_base}_ARG_{j}_SOURCE",
+                                                value=arg_src,
+                                            )
+                                        )
+                            else:
+                                print(
+                                    f"[DEBUG Decorator] Warning: Expected arg_srcs to be a list, got {type(arg_srcs)}"
+                                )
+                        else:
+                            # Handle unexpected type or structure for obj_source if necessary
+                            # For now, assume it fits the expected tuple structure if isinstance passes
+                            # origin_src, arg_srcs = None, [] # Default/error state (already covered by outer check)
+                            print(
+                                f"[DEBUG Decorator] Warning: Unexpected obj_source structure: {obj_source}"
+                            )
                     else:
                         print(
                             f"Warning: Unknown source type for included object {obj_name_str}: {type(obj_source)}"
@@ -826,19 +844,44 @@ def processor(
         # Add: Included object sources (if any)
         # Add: INIT_FUNC_NAME (if provided)
 
+        # Calculate module_path based on relative file path
+        calculated_module_path = None
+        if rel_func_path:
+            # Convert OS-specific path to module path (e.g., subdir/file.py -> subdir.file)
+            base, ext = os.path.splitext(rel_func_path)
+            if ext == ".py":
+                module_path_parts = base.split(os.sep)
+                if module_path_parts[-1] == "__init__":
+                    module_path_parts.pop()  # Remove __init__
+                # Filter out potential empty strings if path started with / or had //
+                module_path_parts = [part for part in module_path_parts if part]
+                calculated_module_path = ".".join(module_path_parts)
+            else:
+                # Not a python file? Should not happen based on inspect.getfile
+                print(
+                    f"[DEBUG Decorator] Warning: Function source file is not a .py file: {rel_func_path}"
+                )
+                # Set calculated_module_path to None explicitly to trigger fallback later
+                calculated_module_path = None
+        else:
+            # Should have errored earlier if rel_func_path is None
+            print(
+                "[DEBUG Decorator] Warning: Could not determine relative function path. Falling back to func.__module__."
+            )
+            # Set calculated_module_path to None explicitly to trigger fallback later
+            calculated_module_path = None
+
+        # Assign final module_path using fallback if calculation failed or wasn't applicable
+        if calculated_module_path is not None:
+            module_path = calculated_module_path
+            print(f"[DEBUG Decorator] Using calculated module path: {module_path}")
+        else:
+            module_path = func.__module__  # Fallback
+            print(f"[DEBUG Decorator] Falling back to func.__module__: {module_path}")
+
         # Basic info needed by consumer to find and run the function
         all_env.append(V1EnvVar(key="FUNCTION_NAME", value=processor_name))
         if rel_func_path:
-            # Convert OS-specific path to module path (e.g., subdir/file.py -> subdir.file)
-            module_path = rel_func_path.replace(os.sep, ".")
-            if module_path.endswith(".py"):
-                module_path = module_path[:-3]
-            # Handle __init__.py -> treat as package name
-            if module_path.endswith(".__init__"):
-                module_path = module_path[: -len(".__init__")]
-            elif module_path == "__init__":  # Top-level __init__.py
-                module_path = ""  # Or handle differently? Let's assume it means import '.'? Maybe error?
-
             # For now, just pass the relative file path, consumer will handle conversion
             all_env.append(
                 V1EnvVar(key="NEBU_ENTRYPOINT_MODULE_PATH", value=rel_func_path)
@@ -846,9 +889,7 @@ def processor(
             print(
                 f"[DEBUG Decorator] Set NEBU_ENTRYPOINT_MODULE_PATH to: {rel_func_path}"
             )
-        else:
-            # Should have errored earlier if rel_func_path is None
-            raise RuntimeError("Internal error: Relative function path not determined.")
+        # No else needed, handled by fallback calculation above
 
         if init_func:
             init_func_name = init_func.__name__  # Get name here
@@ -862,26 +903,52 @@ def processor(
             print(f"[DEBUG Decorator] Set INIT_FUNC_NAME to: {init_func_name}")
 
         # Type info (still useful for deserialization/validation in consumer)
+        # Adjust type strings to replace '__main__' with the calculated module path
+        param_type_str_repr = str(param_type)
+        if module_path != "__main__" and "__main__." in param_type_str_repr:
+            # Be careful with replacement - replace only module prefix
+            # Example: "<class '__main__.MyModel'>" -> "<class 'mymodule.MyModel'>"
+            # Example: "typing.Optional[__main__.MyModel]" -> "typing.Optional[mymodule.MyModel]"
+            param_type_str_repr = param_type_str_repr.replace(
+                "__main__.", f"{module_path}."
+            )
+            print(
+                f"[DEBUG Decorator] Adjusted param type string: {param_type_str_repr}"
+            )
+
         all_env.append(V1EnvVar(key="PARAM_TYPE_STR", value=param_type_str_repr))
-        all_env.append(
-            V1EnvVar(key="RETURN_TYPE_STR", value=return_type_str_repr)
-        )  # Use repr
+
+        return_type_str_repr = str(return_type)
+        if module_path != "__main__" and "__main__." in return_type_str_repr:
+            return_type_str_repr = return_type_str_repr.replace(
+                "__main__.", f"{module_path}."
+            )
+            print(
+                f"[DEBUG Decorator] Adjusted return type string: {return_type_str_repr}"
+            )
+
+        all_env.append(V1EnvVar(key="RETURN_TYPE_STR", value=return_type_str_repr))
         all_env.append(V1EnvVar(key="IS_STREAM_MESSAGE", value=str(is_stream_message)))
         if content_type and hasattr(content_type, "__name__"):
+            content_type_name = None
             # Check if content_type is a class before accessing __name__
             if isinstance(content_type, type):
+                content_type_name = content_type.__name__
                 all_env.append(
-                    V1EnvVar(key="CONTENT_TYPE_NAME", value=content_type.__name__)
+                    V1EnvVar(key="CONTENT_TYPE_NAME", value=content_type_name)
                 )
             else:
                 # Handle unresolved types / typevars if needed
                 print(
                     f"Warning: Content type '{content_type}' is not a class, cannot get name."
                 )
-        # MODULE_NAME might be less reliable now, depends on where func is defined relative to project root
+        # Use the calculated module_path for MODULE_NAME
         all_env.append(
-            V1EnvVar(key="MODULE_NAME", value=func.__module__)
-        )  # Keep for potential debugging/info
+            V1EnvVar(
+                key="MODULE_NAME", value=module_path
+            )  # module_path is guaranteed to be a string here (calculated or fallback)
+        )
+        print(f"[DEBUG Decorator] Set MODULE_NAME to: {module_path}")
 
         # Add PYTHONPATH
         pythonpath_value = CONTAINER_CODE_DIR
