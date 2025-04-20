@@ -1,8 +1,7 @@
+from chatmux.openai import ChatRequest
 from infer import infer_qwen_vl
 
-from nebu.chatx.openai import ChatCompletionRequest
-
-req = ChatCompletionRequest(
+req = ChatRequest(
     model="clinton16",
     messages=[{"role": "user", "content": "Who is this an image of?"}],
 )

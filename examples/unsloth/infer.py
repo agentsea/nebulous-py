@@ -3,20 +3,20 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, List
 
-from nebu import (
-    Adapter,
-    Bucket,
-    ContainerConfig,
-    Message,
-    is_allowed,
-    oai_to_qwen,
-)
-from nebu.chatx.openai import (
+from chatmux.openai import (
     ChatCompletionChoice,
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChatCompletionResponseMessage,
     Logprobs,
+)
+from utils import Adapter
+
+from nebu import (
+    Bucket,
+    ContainerConfig,
+    Message,
+    is_allowed,
 )
 from nebu.processors.decorate import processor
 
@@ -46,7 +46,7 @@ def init():
     import torch
     from unsloth import FastVisionModel
 
-    from nebu import Adapter, Cache
+    from nebu import Cache
 
     if "state" in globals():  # <-- already loaded by an earlier worker
         return

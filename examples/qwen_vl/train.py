@@ -36,13 +36,11 @@ from transformers import (
 )
 
 from nebu import (
-    Adapter,
     Bucket,
     Cache,
     ContainerConfig,
     Message,
     is_allowed,
-    oai_to_qwen,
     processor,
 )
 

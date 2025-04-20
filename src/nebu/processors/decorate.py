@@ -24,6 +24,8 @@ import requests  # Add requests import
 from botocore.exceptions import ClientError  # Import ClientError
 from pydantic import BaseModel
 
+from nebu.auth import get_user_profile  # Import get_user_profile
+from nebu.config import GlobalConfig  # Add this import
 from nebu.containers.models import (
     V1AuthzConfig,
     V1ContainerHealthCheck,
@@ -60,8 +62,7 @@ CONTAINER_CODE_DIR = "/app/src"
 S3_CODE_PREFIX = "nebu-code"
 # Define the token endpoint URL (replace with actual URL)
 # Use environment variable for flexibility, provide a default for local dev
-NEBU_API_BASE_URL = os.environ.get("NEBU_API_BASE_URL", "http://localhost:8080")
-S3_TOKEN_ENDPOINT = f"{NEBU_API_BASE_URL}/iam/s3-token"
+NEBU_API_BASE_URL = os.environ.get("NEBU_API_BASE_URL", "http://localhost:3000")
 
 # --- Jupyter Helper Functions ---
 
@@ -437,12 +438,56 @@ def processor(
             raise ValueError(
                 "Could not determine function directory or relative path for S3 upload."
             )
+        # --- Get API Key ---
+        print("[DEBUG Decorator] Loading Nebu configuration...")
+        try:
+            config = GlobalConfig.read()
+            current_server = config.get_current_server_config()
+            if not current_server or not current_server.api_key:
+                raise ValueError("Nebu server configuration or API key not found.")
+            api_key = current_server.api_key
+            print("[DEBUG Decorator] Nebu API key loaded successfully.")
+        except Exception as e:
+            print(f"ERROR: Failed to load Nebu configuration or API key: {e}")
+            raise RuntimeError(
+                f"Failed to load Nebu configuration or API key: {e}"
+            ) from e
+        # --- End Get API Key ---
 
+        # --- Determine Namespace ---
+        effective_namespace = namespace  # Start with the provided namespace
+        if effective_namespace is None:
+            print("[DEBUG Decorator] Namespace not provided, fetching user profile...")
+            try:
+                user_profile = get_user_profile(api_key)
+                if user_profile.handle:
+                    effective_namespace = user_profile.handle
+                    print(
+                        f"[DEBUG Decorator] Using user handle '{effective_namespace}' as namespace."
+                    )
+                else:
+                    raise ValueError("User profile does not contain a handle.")
+            except Exception as e:
+                print(
+                    f"ERROR: Failed to get user profile or handle for default namespace: {e}"
+                )
+                raise RuntimeError(
+                    f"Failed to get user profile or handle for default namespace: {e}"
+                ) from e
+        # --- End Determine Namespace ---
+
+        # Use processor_name instead of name
+        S3_TOKEN_ENDPOINT = f"{NEBU_API_BASE_URL}/v1/auth/temp-s3-tokens/{effective_namespace}/{processor_name}"
         print(f"[DEBUG Decorator] Fetching S3 token from: {S3_TOKEN_ENDPOINT}")
         try:
-            response = requests.get(S3_TOKEN_ENDPOINT, timeout=10)  # Add timeout
+            headers = {"Authorization": f"Bearer {api_key}"}  # Add headers here
+
+            # Try GET request instead of POST for this endpoint
+            response = requests.get(S3_TOKEN_ENDPOINT, headers=headers, timeout=10)
             response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
             s3_token_data = response.json()
+
+            print(f"[DEBUG Decorator] S3 token data: {s3_token_data}")
 
             aws_access_key_id = s3_token_data.get("access_key_id")
             aws_secret_access_key = s3_token_data.get("secret_access_key")
@@ -466,7 +511,8 @@ def processor(
             s3_dest_components = [S3_CODE_PREFIX, unique_suffix]
             if base_path:
                 # Handle potential multiple path segments in base_path
-                s3_dest_components.insert(0, *base_path.split("/"))
+                path_components = [comp for comp in base_path.split("/") if comp]
+                s3_dest_components = path_components + s3_dest_components
 
             # Filter out empty strings that might result from split
             s3_destination_key_components = [
@@ -889,7 +935,7 @@ def processor(
         # --- Final Setup ---
         print("[DEBUG Decorator] Preparing final Processor object...")
         metadata = V1ResourceMetaRequest(
-            name=processor_name, namespace=namespace, labels=labels
+            name=processor_name, namespace=effective_namespace, labels=labels
         )
         # Base command now just runs the consumer module, relies on PYTHONPATH finding code
         consumer_module = "nebu.processors.consumer"
@@ -900,10 +946,12 @@ def processor(
             consumer_execution_command = f"{python_cmd} -u -m {consumer_module}"
 
         # Setup commands: Base dependencies needed by consumer.py itself or the framework
-        # Assume nebu package (and thus boto3, requests, redis-py, dill, pydantic)
-        # are installed in the base image or via other means.
-        # User's setup_script is still valuable for *their* specific dependencies.
-        setup_commands_list = []
+        # Install required dependencies for the consumer to run properly
+        base_deps_install = (
+            "pip install nebu redis PySocks pydantic dill boto3 requests"
+        )
+        setup_commands_list = [base_deps_install]
+
         if setup_script:
             print("[DEBUG Decorator] Adding user setup script to setup commands.")
             setup_commands_list.append(setup_script.strip())
@@ -950,7 +998,7 @@ def processor(
 
         processor_instance = Processor(
             name=processor_name,
-            namespace=namespace,
+            namespace=effective_namespace,
             labels=labels,
             container=container_request,
             schema_=None,  # Schema info might be derived differently now if needed

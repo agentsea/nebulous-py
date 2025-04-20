@@ -2,6 +2,8 @@ import os
 from typing import Optional
 
 from pydantic import BaseModel
+from sub.print_util import print_lower_level
+from utils import Adapter, print_same_level
 
 from nebu import Message
 from nebu.processors.decorate import processor
@@ -11,6 +13,9 @@ from nebu.processors.models import (
     V1ScaleUp,
     V1ScaleZero,
 )
+
+print_lower_level("module")
+print_same_level("module")
 
 
 class TrainingRequest(BaseModel):
@@ -53,7 +58,7 @@ setup_script = """
 apt update
 apt install -y git
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-pip install trl peft transformers bitsandbytes sentencepiece accelerate
+pip install trl peft transformers bitsandbytes sentencepiece accelerate chatmux
 pip uninstall -y xformers
 pip install -U xformers --index-url https://download.pytorch.org/whl/cu126
 pip install -e git+https://github.com/pbarker/unsloth-zoo.git#egg=unsloth_zoo
@@ -74,24 +79,27 @@ def train_unsloth_sft(message: Message[TrainingRequest]) -> TrainingResponse:
 
     import requests
     import torch
+    from chatmux import oai_to_unsloth
     from trl import SFTConfig, SFTTrainer
     from unsloth import FastVisionModel, is_bf16_supported
     from unsloth.trainer import UnslothVisionDataCollator
 
     from nebu import (
-        Adapter,
         Bucket,
         Cache,
         ContainerConfig,
         find_latest_checkpoint,
         is_allowed,
-        oai_to_unsloth,
     )
 
+    print_lower_level("train_unsloth_sft")
+    print_same_level("train_unsloth_sft")
+
     print("message", message)
+    if not message.content:
+        raise ValueError("No message content provided")
+
     training_request: TrainingRequest = message.content
-    if not training_request:
-        raise ValueError("No training request provided")
 
     container_config = ContainerConfig.from_env()
     print("container_config", container_config)
@@ -237,9 +245,6 @@ def train_unsloth_sft(message: Message[TrainingRequest]) -> TrainingResponse:
         base_model=training_request.model,
         epochs_trained=train_epochs,
         last_trained=int(time.time()),
-        lora_rank=training_request.lora_rank,
-        lora_alpha=training_request.lora_alpha,
-        lora_dropout=training_request.lora_dropout,
     )
     cache.set(cache_key, adapter.model_dump_json())
 
