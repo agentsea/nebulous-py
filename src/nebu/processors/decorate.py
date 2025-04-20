@@ -501,8 +501,8 @@ def processor(
                     "Missing required fields (access_key_id, secret_access_key, s3_base_uri) in S3 token response."
                 )
 
-            # Construct unique S3 path: s3://<base_bucket>/<base_prefix>/<code_prefix>/<processor_name>-<uuid>/
-            unique_suffix = f"{processor_name}-{uuid.uuid4()}"
+            # Construct unique S3 path: s3://<base_bucket>/<base_prefix>/<code_prefix>/<namespace>/<processor_name>/
+            unique_suffix = f"{effective_namespace}/{processor_name}"
             parsed_base = urlparse(s3_base_uri)
             if not parsed_base.scheme == "s3" or not parsed_base.netloc:
                 raise ValueError(f"Invalid s3_base_uri received: {s3_base_uri}")
@@ -545,7 +545,7 @@ def processor(
             s3_bucket.sync(
                 source=func_dir,
                 destination=s3_destination_uri,
-                delete=False,
+                delete=True,
                 dry_run=False,
             )
             print("[DEBUG Decorator] S3 code upload completed.")

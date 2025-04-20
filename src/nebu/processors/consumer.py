@@ -374,6 +374,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             created_at = (
                 datetime.fromisoformat(created_at_str)
                 if created_at_str
+                and isinstance(created_at_str, str)  # Check type explicitly
                 else datetime.now(timezone.utc)
             )
         except ValueError:
@@ -651,6 +652,7 @@ consumer_name = f"consumer-{os.getpid()}-{socket.gethostname()}"  # More unique 
 
 try:
     while True:
+        print("reading from stream...")
         try:
             # --- Check for Code Updates ---
             if entrypoint_abs_path:  # Should always be set after init
