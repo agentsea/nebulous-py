@@ -1,6 +1,7 @@
 import ast  # For parsing notebook code
 import inspect
 import os
+import re  # Added import
 import textwrap
 from typing import (
     Any,
@@ -75,9 +76,10 @@ def is_jupyter_notebook():
 
         if importlib.util.find_spec("IPython") is None:
             return False
-        import IPython  # Now safe to import
+        # Fix: Import get_ipython directly
+        from IPython.core.getipython import get_ipython  # Now safe to import
 
-        ip = IPython.get_ipython()
+        ip = get_ipython()  # Use the imported function
         if ip is None:  # type: ignore
             # print("[DEBUG Helper] is_jupyter_notebook: No IPython instance found.")
             return False
@@ -102,9 +104,10 @@ def get_notebook_executed_code():
     """
     print("[DEBUG Helper] Attempting to get notebook execution history...")
     try:
-        import IPython
+        # Fix: Import get_ipython directly
+        from IPython.core.getipython import get_ipython
 
-        ip = IPython.get_ipython()
+        ip = get_ipython()  # Use the imported function
         if ip is None or not hasattr(ip, "history_manager"):
             print(
                 "[DEBUG Helper] get_notebook_executed_code: No IPython instance or history_manager."
@@ -187,12 +190,14 @@ def extract_definition_source_from_string(
                         start_lineno = getattr(node, "lineno", 1) - 1
                         end_lineno = getattr(node, "end_lineno", start_lineno + 1)
 
-                        if hasattr(node, "decorator_list") and node.decorator_list:
+                        if hasattr(node, "decorator_list") and node.decorator_list:  # type: ignore
                             # Ensure it's a node type that *can* have decorators
                             # FunctionDef and ClassDef have decorator_list
                             first_decorator_start_line = (
                                 getattr(
-                                    node.decorator_list[0], "lineno", start_lineno + 1
+                                    node.decorator_list[0],  # type: ignore
+                                    "lineno",
+                                    start_lineno + 1,
                                 )
                                 - 1
                             )  # type: ignore
@@ -599,7 +604,7 @@ def processor(
                     included_sources[obj] = obj_source
                     # Decide how to pass included source - keep using Env Vars for now
                     env_key_base = f"INCLUDED_OBJECT_{i}"
-                    if isinstance(obj_source, str):
+                    if isinstance(obj_source, str):  # type: ignore[arg-type]
                         all_env.append(
                             V1EnvVar(key=f"{env_key_base}_SOURCE", value=obj_source)
                         )
@@ -609,7 +614,7 @@ def processor(
                         # Ensure obj_source is indeed a tuple before unpacking
                         if len(obj_source) == 2:
                             # Now safe to unpack
-                            origin_src, arg_srcs = obj_source
+                            origin_src, arg_srcs = obj_source  # type: ignore[misc] # Suppress persistent tuple unpacking error
                             # type: ignore[misc] # Suppress persistent tuple unpacking error
                             if origin_src and isinstance(origin_src, str):
                                 all_env.append(
@@ -708,6 +713,7 @@ def processor(
         print(f"[DEBUG Decorator] get_origin result: {origin}, get_args result: {args}")
         is_stream_message = False
         content_type = None
+        content_type_name_from_regex = None  # Store regex result here
 
         # Use Message class directly for comparison
         message_cls = Message  # Get the class object
@@ -727,18 +733,63 @@ def processor(
                 )
             else:
                 print(
-                    "[DEBUG Decorator] Message detected, but no generic arguments found via get_args."
+                    "[DEBUG Decorator] Message detected, but no generic arguments found via get_args. Attempting regex fallback on string repr."
                 )
+                # --- Regex Fallback Start ---
+                match = re.search(r"Message\[([\w\.]+)\]", param_type_str_repr)
+                if match:
+                    content_type_name_from_regex = match.group(1)
+                    print(
+                        f"[DEBUG Decorator] Extracted content type name via regex: {content_type_name_from_regex}"
+                    )
+                else:
+                    print(
+                        "[DEBUG Decorator] Regex fallback failed to extract content type name."
+                    )
+                # --- Regex Fallback End ---
+        # Check 2a: Regex fallback if get_origin failed but string matches pattern
+        elif origin is None and param_type is not None:
+            print(
+                "[DEBUG Decorator] get_origin failed. Attempting regex fallback on string representation."
+            )
+            match = re.search(r"Message\[([\w\.]+)\]", param_type_str_repr)
+            if match:
+                print(
+                    "[DEBUG Decorator] Regex fallback successful after get_origin failed."
+                )
+                is_stream_message = True
+                content_type_name_from_regex = match.group(1)
+                # We don't have the actual content_type object here, only the name
+                content_type = None
+                print(
+                    f"[DEBUG Decorator] Extracted content type name via regex: {content_type_name_from_regex}"
+                )
+            else:
+                print(
+                    "[DEBUG Decorator] Regex fallback also failed. Treating as non-Message type."
+                )
+                is_stream_message = False
+                content_type = None
         # Check 2: Direct type check (Handles cases where get_origin might fail but type is correct)
         elif isinstance(param_type, type) and param_type is message_cls:
-            print("[DEBUG Decorator] Input type identified as direct Message type.")
+            # This case likely won't have generic args accessible easily if get_origin failed
+            print(
+                "[DEBUG Decorator] Input type identified as direct Message type. Attempting regex fallback."
+            )
             is_stream_message = True
-        # Check 3: Regex fallback might be less reliable now, but keep as last resort?
-        elif (
-            origin is None and param_type is not None
-        ):  # Only if origin failed and type exists
-            # ... (existing regex fallback logic using param_type_str_repr) ...
-            pass  # Keep existing regex logic here if desired
+            # --- Regex Fallback Start ---
+            match = re.search(r"Message\[([\w\.]+)\]", param_type_str_repr)
+            if match:
+                content_type_name_from_regex = match.group(1)
+                print(
+                    f"[DEBUG Decorator] Extracted content type name via regex: {content_type_name_from_regex}"
+                )
+            else:
+                print(
+                    "[DEBUG Decorator] Regex fallback failed to extract content type name."
+                )
+            # --- Regex Fallback End ---
+        # Check 3: Removed old placeholder elif branch
 
         else:  # Handle cases where param_type might be None or origin is something else
             print(
@@ -929,19 +980,31 @@ def processor(
 
         all_env.append(V1EnvVar(key="RETURN_TYPE_STR", value=return_type_str_repr))
         all_env.append(V1EnvVar(key="IS_STREAM_MESSAGE", value=str(is_stream_message)))
-        if content_type and hasattr(content_type, "__name__"):
-            content_type_name = None
-            # Check if content_type is a class before accessing __name__
-            if isinstance(content_type, type):
-                content_type_name = content_type.__name__
-                all_env.append(
-                    V1EnvVar(key="CONTENT_TYPE_NAME", value=content_type_name)
-                )
-            else:
-                # Handle unresolved types / typevars if needed
+
+        # Determine and set CONTENT_TYPE_NAME using object or regex fallback
+        content_type_name_to_set = None
+        if content_type and isinstance(content_type, type):
+            content_type_name_to_set = content_type.__name__
+            print(
+                f"[DEBUG Decorator] Using content type name from resolved type object: {content_type_name_to_set}"
+            )
+        elif content_type_name_from_regex:
+            content_type_name_to_set = content_type_name_from_regex
+            print(
+                f"[DEBUG Decorator] Using content type name from regex fallback: {content_type_name_to_set}"
+            )
+        else:
+            # Only warn if it was supposed to be a Message type
+            if is_stream_message:
                 print(
-                    f"Warning: Content type '{content_type}' is not a class, cannot get name."
+                    f"Warning: Could not determine CONTENT_TYPE_NAME for Message parameter {param_name} ({param_type_str_repr}). Consumer might use raw content."
                 )
+
+        if content_type_name_to_set:
+            all_env.append(
+                V1EnvVar(key="CONTENT_TYPE_NAME", value=content_type_name_to_set)
+            )
+
         # Use the calculated module_path for MODULE_NAME
         all_env.append(
             V1EnvVar(
@@ -1083,7 +1146,7 @@ def processor(
         # setattr(processor_instance, 'original_func', func) # Use setattr if not in model
         try:
             # This will fail if Processor hasn't been updated to include this field
-            processor_instance.original_func = func
+            processor_instance.original_func = func  # type: ignore
         except AttributeError:
             print(
                 "Warning: Could not assign original_func to Processor instance. Update Processor model or remove assignment."

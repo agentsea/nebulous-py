@@ -78,11 +78,11 @@ def train_unsloth_sft(message: Message[TrainingRequest]) -> TrainingResponse:
     import time
 
     import requests
+    from unsloth import FastVisionModel, is_bf16_supported  # isort: skip # type: ignore
+    from unsloth.trainer import UnslothVisionDataCollator  # isort: skip # type: ignore
     import torch
     from chatmux import oai_to_unsloth
     from trl import SFTConfig, SFTTrainer
-    from unsloth import FastVisionModel, is_bf16_supported
-    from unsloth.trainer import UnslothVisionDataCollator
 
     from nebu import (
         Bucket,
