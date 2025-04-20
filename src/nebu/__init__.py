@@ -3,7 +3,6 @@
 # ruff: noqa: F401
 # ruff: noqa: F403
 
-from .adapter import *
 from .auth import is_allowed
 from .cache import Cache, OwnedValue
 from .chatx.convert import *
