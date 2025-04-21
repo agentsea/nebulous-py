@@ -396,13 +396,13 @@ def processor(
 ):
     def decorator(
         func: Callable[[Any], Any],
-    ) -> Processor | Callable[[Any], Any]:
+    ) -> Processor:
         # --- Prevent Recursion Guard ---
         if os.environ.get(_NEBU_INSIDE_CONSUMER_ENV_VAR) == "1":
             print(
                 f"[DEBUG Decorator] Guard triggered for '{func.__name__}'. Returning original function."
             )
-            return func
+            return func  # type: ignore
         # --- End Guard ---
 
         print(

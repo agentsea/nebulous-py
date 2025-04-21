@@ -103,7 +103,7 @@ def infer_qwen_vl(
 ) -> ChatCompletionResponse:
     full_time = time.time()
     from qwen_vl_utils import process_vision_info
-    from unsloth import FastVisionModel
+    from unsloth import FastVisionModel  # type: ignore
 
     global state
 

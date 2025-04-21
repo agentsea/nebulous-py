@@ -1,6 +1,6 @@
 import json
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generic, List, Optional, TypeVar
 
 import requests
 from pydantic import BaseModel
@@ -18,6 +18,8 @@ from nebu.processors.models import (
     V1StreamData,
     V1UpdateProcessor,
 )
+
+InputType = TypeVar("InputType", bound=BaseModel)
 
 
 def _fetch_and_print_logs(log_url: str, api_key: str, processor_name: str):
@@ -78,7 +80,7 @@ def _fetch_and_print_logs(log_url: str, api_key: str, processor_name: str):
         )
 
 
-class Processor:
+class Processor(Generic[InputType]):
     """
     A class for managing Processor instances.
     """
@@ -203,14 +205,14 @@ class Processor:
             patch_response.raise_for_status()
             print(f"Updated Processor {self.processor.metadata.name}")
 
-    def __call__(self, data: BaseModel, wait: bool = False) -> Dict[str, Any]:
+    def __call__(self, data: InputType, wait: bool = False) -> Dict[str, Any]:
         """
         Allows the Processor instance to be called like a function, sending data.
         """
         return self.send(data=data, wait=wait)
 
     def send(
-        self, data: BaseModel, wait: bool = False, logs: bool = False
+        self, data: InputType, wait: bool = False, logs: bool = False
     ) -> Dict[str, Any]:
         """
         Send data to the processor and optionally stream logs in the background.

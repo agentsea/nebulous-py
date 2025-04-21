@@ -52,12 +52,17 @@ class GlobalConfig:
             config = cls()  # default
 
         # Collect environment variables (no fallback defaults here)
-        env_api_key = os.environ.get("NEBU_API_KEY") or os.environ.get(
-            "AGENTSEA_API_KEY"
+        env_api_key = (
+            os.environ.get("NEBU_API_KEY")
+            or os.environ.get("AGENTSEA_API_KEY")
+            or os.environ.get("ORIGN_API_KEY")
         )
-        env_server = os.environ.get("NEBU_SERVER") or os.environ.get("AGENTSEA_SERVER")
-        env_auth_server = os.environ.get("NEBU_AUTH_SERVER") or os.environ.get(
-            "AGENTSEA_AUTH_SERVER"
+        env_server = os.environ.get("NEBU_SERVER")
+        env_auth_server = (
+            os.environ.get("NEBU_AUTH_SERVER")
+            or os.environ.get("AGENTSEA_AUTH_SERVER")
+            or os.environ.get("ORIGN_AUTH_SERVER")
+            or os.environ.get("AGENTSEA_AUTH_URL")
         )
 
         # Only proceed if all three environment variables are present
@@ -158,7 +163,9 @@ class ContainerConfig:
         Load configuration from environment variables.
         """
         return cls(
-            api_key=os.environ.get("NEBU_API_KEY"),
+            api_key=os.environ.get("NEBU_API_KEY")
+            or os.environ.get("AGENTSEA_API_KEY")
+            or os.environ.get("ORIGN_API_KEY"),
             server=os.environ.get("NEBU_SERVER"),
             namespace=os.environ.get("NEBU_NAMESPACE"),
             name=os.environ.get("NEBU_NAME"),
