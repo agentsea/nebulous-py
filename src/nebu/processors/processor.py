@@ -205,11 +205,17 @@ class Processor(Generic[InputType]):
             patch_response.raise_for_status()
             print(f"Updated Processor {self.processor.metadata.name}")
 
-    def __call__(self, data: InputType, wait: bool = False) -> Dict[str, Any]:
+    def __call__(
+        self,
+        data: InputType,
+        wait: bool = False,
+        logs: bool = False,
+        api_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Allows the Processor instance to be called like a function, sending data.
         """
-        return self.send(data=data, wait=wait)
+        return self.send(data=data, wait=wait, logs=logs, api_key=api_key)
 
     def send(
         self,
