@@ -212,7 +212,11 @@ class Processor(Generic[InputType]):
         return self.send(data=data, wait=wait)
 
     def send(
-        self, data: InputType, wait: bool = False, logs: bool = False
+        self,
+        data: InputType,
+        wait: bool = False,
+        logs: bool = False,
+        api_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Send data to the processor and optionally stream logs in the background.
@@ -227,6 +231,9 @@ class Processor(Generic[InputType]):
         processor_name = self.processor.metadata.name
         processor_namespace = self.processor.metadata.namespace
 
+        if not api_key:
+            api_key = self.api_key
+
         # --- Send Data ---
         messages_url = (
             f"{self.processors_url}/{processor_namespace}/{processor_name}/messages"
@@ -238,7 +245,7 @@ class Processor(Generic[InputType]):
         response = requests.post(
             messages_url,
             json=stream_data.model_dump(mode="json", exclude_none=True),
-            headers={"Authorization": f"Bearer {self.api_key}"},
+            headers={"Authorization": f"Bearer {api_key}"},
         )
         response.raise_for_status()
         send_response_json = response.json()
