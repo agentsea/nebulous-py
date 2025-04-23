@@ -20,6 +20,7 @@ from nebu.processors.models import (
 )
 
 InputType = TypeVar("InputType", bound=BaseModel)
+OutputType = TypeVar("OutputType", bound=BaseModel)
 
 
 def _fetch_and_print_logs(log_url: str, api_key: str, processor_name: str):
@@ -80,7 +81,7 @@ def _fetch_and_print_logs(log_url: str, api_key: str, processor_name: str):
         )
 
 
-class Processor(Generic[InputType]):
+class Processor(Generic[InputType, OutputType]):
     """
     A class for managing Processor instances.
     """
@@ -212,7 +213,7 @@ class Processor(Generic[InputType]):
         wait: bool = False,
         logs: bool = False,
         api_key: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> OutputType | Dict[str, Any] | None:
         """
         Allows the Processor instance to be called like a function, sending data.
         """
@@ -224,7 +225,7 @@ class Processor(Generic[InputType]):
         wait: bool = False,
         logs: bool = False,
         api_key: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> OutputType | Dict[str, Any] | None:
         """
         Send data to the processor and optionally stream logs in the background.
         """
