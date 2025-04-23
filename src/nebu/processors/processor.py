@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from nebu.auth import get_user_profile
 from nebu.config import GlobalConfig
-from nebu.meta import V1ResourceMetaRequest
+from nebu.meta import V1ResourceMetaRequest, V1ResourceReference
 from nebu.processors.models import (
     V1ContainerRequest,
     V1Processor,
@@ -203,6 +203,7 @@ class Processor(Generic[InputType]):
                 headers={"Authorization": f"Bearer {self.api_key}"},
             )
             patch_response.raise_for_status()
+            self.processor = V1Processor.model_validate(patch_response.json())
             print(f"Updated Processor {self.processor.metadata.name}")
 
     def __call__(
@@ -389,11 +390,17 @@ class Processor(Generic[InputType]):
         response.raise_for_status()
         return
 
-    def ref(self) -> str:
+    def ref(self) -> V1ResourceReference:
         """
         Get the resource ref for the processor.
         """
-        return f"{self.name}.{self.namespace}.Processor"
+        if not self.processor:
+            raise ValueError("Processor not found")
+        return V1ResourceReference(
+            name=self.processor.metadata.name,
+            namespace=self.processor.metadata.namespace,
+            kind="Processor",
+        )
 
     def stop_logs(self):
         """
