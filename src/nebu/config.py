@@ -54,14 +54,18 @@ class GlobalConfig:
         # Collect environment variables (no fallback defaults here)
         env_api_key = (
             os.environ.get("NEBU_API_KEY")
+            or os.environ.get("NEBULOUS_API_KEY")
             or os.environ.get("AGENTSEA_API_KEY")
             or os.environ.get("ORIGN_API_KEY")
+            or os.environ.get("ORIGIN_API_KEY")
         )
-        env_server = os.environ.get("NEBU_SERVER")
+        env_server = os.environ.get("NEBU_SERVER") or os.environ.get("NEBULOUS_SERVER")
         env_auth_server = (
             os.environ.get("NEBU_AUTH_SERVER")
+            or os.environ.get("NEBULOUS_AUTH_SERVER")
             or os.environ.get("AGENTSEA_AUTH_SERVER")
             or os.environ.get("ORIGN_AUTH_SERVER")
+            or os.environ.get("ORIGIN_AUTH_SERVER")
             or os.environ.get("AGENTSEA_AUTH_URL")
         )
 
@@ -164,10 +168,14 @@ class ContainerConfig:
         """
         return cls(
             api_key=os.environ.get("NEBU_API_KEY")
-            or os.environ.get("AGENTSEA_API_KEY")
-            or os.environ.get("ORIGN_API_KEY"),
-            server=os.environ.get("NEBU_SERVER"),
-            namespace=os.environ.get("NEBU_NAMESPACE"),
+            or os.environ.get("NEBULOUS_API_KEY")
+            or os.environ.get("ORIGN_API_KEY")
+            or os.environ.get("ORIGIN_API_KEY"),
+            server=os.environ.get("NEBU_SERVER") or os.environ.get("NEBULOUS_SERVER"),
+            namespace=os.environ.get("NEBU_NAMESPACE")
+            or os.environ.get("NEBULOUS_NAMESPACE")
+            or os.environ.get("ORIGN_NAMESPACE")
+            or os.environ.get("ORIGIN_NAMESPACE"),
             name=os.environ.get("NEBU_NAME"),
             container_id=os.environ.get("NEBU_CONTAINER_ID"),
             date=os.environ.get("NEBU_DATE"),

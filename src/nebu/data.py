@@ -420,9 +420,10 @@ class Bucket:
 
         for action in actions_to_perform:
             reason = action["reason"]
-            dest_full_path_or_key = action["dest_full_path_or_key"]
+
             if action["action"] == "upload":
                 local_path = action["source_path"]
+                dest_full_path_or_key = action["dest_full_path_or_key"]
                 if not isinstance(dest_full_path_or_key, str):
                     print(f"ERROR: Invalid dest path: {dest_full_path_or_key}")
                     continue
@@ -447,7 +448,7 @@ class Bucket:
                         )
             elif action["action"] == "download":
                 s3_key_full = action["s3_key_full_src"]
-                local_path = dest_full_path_or_key
+                local_path = action["dest_full_path_or_key"]
                 source_bucket_dl = action["source_bucket"]
                 if self.verbose:
                     print(
