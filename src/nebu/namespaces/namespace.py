@@ -1,18 +1,14 @@
 from typing import Dict, List, Optional
 
 import requests
-from pydantic import BaseModel
 
 from nebu.config import GlobalConfig
 from nebu.namespaces.models import (
     V1Namespace,
     V1NamespaceMetaRequest,
     V1NamespaceRequest,
+    V1Namespaces,
 )
-
-
-class V1Namespaces(BaseModel):
-    namespaces: List[V1Namespace]
 
 
 class Namespace:
@@ -46,8 +42,9 @@ class Namespace:
             self.namespaces_url, headers={"Authorization": f"Bearer {self.api_key}"}
         )
         response.raise_for_status()
-
-        existing_namespaces = V1Namespaces.model_validate(response.json())
+        resp_json = response.json()
+        print(resp_json)
+        existing_namespaces = V1Namespaces.model_validate(resp_json)
         self.namespace: Optional[V1Namespace] = next(
             (
                 namespace_val

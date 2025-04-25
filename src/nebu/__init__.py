@@ -10,6 +10,8 @@ from .containers.container import Container
 from .containers.models import *
 from .data import *
 from .meta import *
+from .namespaces.models import *
+from .namespaces.namespace import *
 from .processors.decorate import *
 from .processors.models import *
 from .processors.processor import *

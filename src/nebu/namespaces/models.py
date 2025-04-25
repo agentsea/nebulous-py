@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -18,3 +18,7 @@ class V1NamespaceRequest(BaseModel):
 class V1Namespace(BaseModel):
     kind: str = Field(default="Namespace")
     metadata: V1ResourceMeta
+
+
+class V1Namespaces(BaseModel):
+    namespaces: List[V1Namespace]
