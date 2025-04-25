@@ -14,7 +14,7 @@ DRY_RUN = False  # change to False when you’re ready
 iam = boto3.client("iam")
 
 
-def safe_delete(func, **kwargs):
+def safe_delete(func, **kwargs):  # type: ignore
     """Run an IAM API call and ignore ‘NoSuch*’ errors."""
     try:
         if not DRY_RUN:

@@ -1075,7 +1075,7 @@ def processor(
         # Setup commands: Base dependencies needed by consumer.py itself or the framework
         # Install required dependencies for the consumer to run properly
         base_deps_install = (
-            "pip install nebu redis PySocks pydantic dill boto3 requests"
+            "pip install orign redis PySocks pydantic dill boto3 requests"
         )
         setup_commands_list = [base_deps_install]
 
