@@ -134,6 +134,20 @@ class GlobalConfig:
                     return srv
         return None
 
+    @classmethod
+    def get_server_url(cls) -> str:
+        """
+        Get the server URL for the current_server name, or None if unset/missing.
+        """
+        config = cls.read()
+        server_config = config.get_current_server_config()
+        server = os.environ.get("NEBU_SERVER") or os.environ.get("NEBULOUS_SERVER")
+        if not server:
+            server = server_config.server if server_config else None
+        if not server:
+            raise ValueError("NEBULOUS_SERVER environment variable is not set")
+        return server
+
 
 def _get_config_file_path() -> str:
     """

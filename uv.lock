@@ -1636,7 +1636,7 @@ wheels = [
 
 [[package]]
 name = "nebu"
-version = "0.1.53"
+version = "0.1.61"
 source = { virtual = "." }
 dependencies = [
     { name = "boto3" },

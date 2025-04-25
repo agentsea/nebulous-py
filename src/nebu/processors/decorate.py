@@ -57,9 +57,7 @@ _NEBU_INSIDE_CONSUMER_ENV_VAR = "_NEBU_INSIDE_CONSUMER_EXEC"
 CONTAINER_CODE_DIR = "/app/src"
 # Define S3 prefix for code storage (under the base URI from token endpoint)
 S3_CODE_PREFIX = "nebu-code"
-# Define the token endpoint URL (replace with actual URL)
-# Use environment variable for flexibility, provide a default for local dev
-NEBU_API_BASE_URL = os.environ.get("NEBU_API_BASE_URL", "http://localhost:3000")
+NEBU_API_BASE_URL = GlobalConfig.get_server_url()
 
 # --- Jupyter Helper Functions ---
 
@@ -69,7 +67,6 @@ def is_jupyter_notebook():
     Determine if the current code is running inside a Jupyter notebook.
     Returns bool: True if running inside a Jupyter notebook, False otherwise.
     """
-    # print("[DEBUG Helper] Checking if running in Jupyter...") # Reduce verbosity
     try:
         # Use importlib to avoid runtime dependency if not needed
         import importlib.util
