@@ -422,7 +422,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         else:
             content = content_raw
 
-        # print(f"Content: {content}") # Reduce verbosity
+        print(f"Content: {content}")
 
         # --- Construct Input Object using Imported Types ---
         input_obj: Any = None
