@@ -37,6 +37,7 @@ from nebu.containers.models import (
 )
 from nebu.data import Bucket
 from nebu.meta import V1ResourceMetaRequest
+from nebu.orign import get_orign_server
 from nebu.processors.models import (
     Message,
     V1Scale,
@@ -469,6 +470,12 @@ def processor(
                 all_env.append(
                     V1EnvVar(key="AGENTSEA_AUTH_SERVER", value=auth_server_url)
                 )
+
+            orign_server = get_orign_server()
+            if orign_server:
+                all_env.append(V1EnvVar(key="ORIGN_SERVER", value=orign_server))
+            else:
+                print("[DEBUG Decorator] No Orign server found. Not setting...")
 
         except Exception as e:
             print(f"ERROR: Failed to load Nebu configuration or API key: {e}")
