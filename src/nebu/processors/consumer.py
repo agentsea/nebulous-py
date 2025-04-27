@@ -165,6 +165,12 @@ def load_or_reload_user_code(
         )
 
 
+# Print all environment variables before starting
+print("===== ENVIRONMENT VARIABLES =====")
+for key, value in sorted(os.environ.items()):
+    print(f"{key}={value}")
+print("=================================")
+
 # --- Get Environment Variables ---
 try:
     # Core function info
