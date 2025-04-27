@@ -450,6 +450,26 @@ def processor(
                 raise ValueError("Nebu server configuration or API key not found.")
             api_key = current_server.api_key
             print("[DEBUG Decorator] Nebu API key loaded successfully.")
+
+            # Add additional environment variables from current configuration
+            all_env.append(V1EnvVar(key="AGENTSEA_API_KEY", value=api_key))
+
+            # Get server URL and auth server URL from current configuration
+            server_url = (
+                current_server.server
+                if current_server
+                else GlobalConfig.get_server_url()
+            )
+            auth_server_url = current_server.auth_server if current_server else None
+
+            if server_url:
+                all_env.append(V1EnvVar(key="NEBULOUS_SERVER", value=server_url))
+
+            if auth_server_url:
+                all_env.append(
+                    V1EnvVar(key="AGENTSEA_AUTH_SERVER", value=auth_server_url)
+                )
+
         except Exception as e:
             print(f"ERROR: Failed to load Nebu configuration or API key: {e}")
             raise RuntimeError(
