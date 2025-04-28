@@ -37,7 +37,6 @@ from nebu.containers.models import (
 )
 from nebu.data import Bucket
 from nebu.meta import V1ResourceMetaRequest
-from nebu.orign import get_orign_server
 from nebu.processors.models import (
     Message,
     V1Scale,
@@ -446,12 +445,12 @@ def processor(
         print("[DEBUG Decorator] Loading Nebu configuration...")
         try:
             pass
-            # config = GlobalConfig.read()
-            # current_server = config.get_current_server_config()
-            # if not current_server or not current_server.api_key:
-            #     raise ValueError("Nebu server configuration or API key not found.")
-            # api_key = current_server.api_key
-            # print("[DEBUG Decorator] Nebu API key loaded successfully.")
+            config = GlobalConfig.read()
+            current_server = config.get_current_server_config()
+            if not current_server or not current_server.api_key:
+                raise ValueError("Nebu server configuration or API key not found.")
+            api_key = current_server.api_key
+            print("[DEBUG Decorator] Nebu API key loaded successfully.")
 
             # # Add additional environment variables from current configuration
             # all_env.append(V1EnvVar(key="AGENTSEA_API_KEY", value=api_key))
