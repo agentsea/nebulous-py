@@ -3,6 +3,7 @@ import importlib
 import json
 import os
 import socket
+import subprocess
 import sys
 import time
 import traceback
@@ -27,6 +28,19 @@ imported_module: Optional[types.ModuleType] = None
 local_namespace: Dict[str, Any] = {}  # Namespace for included objects
 last_load_mtime: float = 0.0
 entrypoint_abs_path: Optional[str] = None
+
+REDIS_CONSUMER_GROUP = os.environ.get("REDIS_CONSUMER_GROUP")
+REDIS_STREAM = os.environ.get("REDIS_STREAM")
+NEBU_EXECUTION_MODE = os.environ.get("NEBU_EXECUTION_MODE", "inline").lower()
+execution_mode = NEBU_EXECUTION_MODE
+
+if execution_mode not in ["inline", "subprocess"]:
+    print(
+        f"Invalid NEBU_EXECUTION_MODE: {NEBU_EXECUTION_MODE}. Must be 'inline' or 'subprocess'. Defaulting to 'inline'."
+    )
+    execution_mode = "inline"
+
+print(f"Execution mode: {execution_mode}")
 
 
 # --- Function to Load/Reload User Code ---
@@ -287,8 +301,6 @@ except Exception as e:
 
 # Get Redis connection parameters from environment
 REDIS_URL = os.environ.get("REDIS_URL", "")
-REDIS_CONSUMER_GROUP = os.environ.get("REDIS_CONSUMER_GROUP")
-REDIS_STREAM = os.environ.get("REDIS_STREAM")
 
 if not all([REDIS_URL, REDIS_CONSUMER_GROUP, REDIS_STREAM]):
     print("Missing required Redis environment variables")
@@ -334,15 +346,100 @@ except ResponseError as e:
 def process_message(message_id: str, message_data: Dict[str, str]) -> None:
     # Access the globally managed user code elements
     global target_function, imported_module, local_namespace
+    global execution_mode, r, REDIS_STREAM, REDIS_CONSUMER_GROUP
 
-    # Check if target_function is loaded (might be None if reload failed)
+    # --- Subprocess Execution Path ---
+    if execution_mode == "subprocess":
+        print(f"Processing message {message_id} in subprocess...")
+        try:
+            worker_cmd = [
+                sys.executable,
+                "-m",
+                "nebu.processors.consumer_process_worker",
+            ]
+            process_input = json.dumps(
+                {"message_id": message_id, "message_data": message_data}
+            )
+
+            # Run the worker script as a module
+            # Inherit environment variables automatically
+            # Pass message data via stdin
+            result = subprocess.run(
+                worker_cmd,
+                input=process_input,
+                text=True,
+                capture_output=True,
+                check=True,  # Raise CalledProcessError on non-zero exit
+                env=os.environ.copy(),  # Ensure environment is passed
+            )
+            print(f"Subprocess for {message_id} completed successfully.")
+            if result.stdout:
+                print(f"Subprocess stdout:\n{result.stdout}")
+            # Assume the subprocess handled response sending and acknowledgement
+
+        except subprocess.CalledProcessError as e:
+            print(
+                f"Subprocess for message {message_id} failed with exit code {e.returncode}."
+            )
+            if e.stdout:
+                print(f"Subprocess stdout:\n{e.stdout}")
+            if e.stderr:
+                print(f"Subprocess stderr:\n{e.stderr}")
+
+            # Send a generic error message back, as the subprocess likely failed
+            # before it could send its specific error.
+            _send_error_response(
+                message_id,
+                f"Subprocess execution failed with exit code {e.returncode}",
+                e.stderr or "No stderr captured",
+                message_data.get(
+                    "return_stream"
+                ),  # Try to get return stream from original data
+                message_data.get("user_id"),  # Try to get user_id from original data
+            )
+
+            # CRITICAL: Acknowledge the message here since the subprocess failed
+            try:
+                assert isinstance(REDIS_STREAM, str)
+                assert isinstance(REDIS_CONSUMER_GROUP, str)
+                r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
+                print(f"Acknowledged failed subprocess message {message_id}")
+            except Exception as e_ack:
+                print(
+                    f"CRITICAL: Failed to acknowledge failed subprocess message {message_id}: {e_ack}"
+                )
+
+        except Exception as e:
+            print(
+                f"Error launching or managing subprocess for message {message_id}: {e}"
+            )
+            traceback.print_exc()
+            # Also send an error and acknowledge
+            _send_error_response(
+                message_id,
+                f"Failed to launch subprocess: {e}",
+                traceback.format_exc(),
+                message_data.get("return_stream"),
+                message_data.get("user_id"),
+            )
+            try:
+                assert isinstance(REDIS_STREAM, str)
+                assert isinstance(REDIS_CONSUMER_GROUP, str)
+                r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
+                print(
+                    f"Acknowledged message {message_id} after subprocess launch failure"
+                )
+            except Exception as e_ack:
+                print(
+                    f"CRITICAL: Failed to acknowledge message {message_id} after subprocess launch failure: {e_ack}"
+                )
+        return  # Exit process_message after handling subprocess logic
+
+    # --- Inline Execution Path (Original Logic) ---
     if target_function is None or imported_module is None:
         print(
             f"Error processing message {message_id}: User code (target_function or module) is not loaded. Skipping."
         )
-        # Decide how to handle this - skip and ack? Send error?
-        # Sending error for now, but not acking yet.
-        # This requires the main loop to handle potential ack failure later if needed.
         _send_error_response(
             message_id,
             "User code is not loaded (likely due to a failed reload)",
@@ -562,7 +659,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         # print(f"Input object: {input_obj}") # Reduce verbosity
 
         # Execute the function
-        print(f"Executing function...")
+        print("Executing function...")
         result = target_function(input_obj)
         print(f"Result: {result}")  # Reduce verbosity
 

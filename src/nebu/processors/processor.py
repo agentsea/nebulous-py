@@ -5,7 +5,6 @@ from typing import Any, Dict, Generic, List, Optional, TypeVar
 import requests
 from pydantic import BaseModel
 
-from nebu.auth import get_user_profile
 from nebu.config import GlobalConfig
 from nebu.meta import V1ResourceMetaRequest, V1ResourceReference
 from nebu.processors.models import (
@@ -128,14 +127,7 @@ class Processor(Generic[InputType, OutputType]):
         response.raise_for_status()
 
         if not namespace:
-            if not self.api_key:
-                raise ValueError("No API key provided")
-
-            user_profile = get_user_profile(self.api_key)
-            namespace = user_profile.handle
-
-            if not namespace:
-                namespace = user_profile.email.replace("@", "-").replace(".", "-")
+            namespace = "-"
 
         print(f"Using namespace: {namespace}")
 

@@ -390,6 +390,7 @@ def processor(
     ports: Optional[List[V1PortRequest]] = None,
     proxy_port: Optional[int] = None,
     health_check: Optional[V1ContainerHealthCheck] = None,
+    execution_mode: str = "inline",  # Added parameter
 ):
     def decorator(
         func: Callable[[Any], Any],
@@ -912,6 +913,14 @@ def processor(
         print("[DEBUG Decorator] Type validation complete.")
         # --- End Type Validation ---
 
+        # --- Validate Execution Mode ---
+        if execution_mode not in ["inline", "subprocess"]:
+            raise ValueError(
+                f"Invalid execution_mode: '{execution_mode}'. Must be 'inline' or 'subprocess'."
+            )
+        print(f"[DEBUG Decorator] Using execution mode: {execution_mode}")
+        # --- End Execution Mode Validation ---
+
         # --- Populate Environment Variables ---
         print("[DEBUG Decorator] Populating environment variables...")
         # Keep: FUNCTION_NAME, PARAM_TYPE_STR, RETURN_TYPE_STR, IS_STREAM_MESSAGE, CONTENT_TYPE_NAME, MODULE_NAME
@@ -1036,6 +1045,10 @@ def processor(
             )  # module_path is guaranteed to be a string here (calculated or fallback)
         )
         print(f"[DEBUG Decorator] Set MODULE_NAME to: {module_path}")
+
+        # Add Execution Mode
+        all_env.append(V1EnvVar(key="NEBU_EXECUTION_MODE", value=execution_mode))
+        print(f"[DEBUG Decorator] Set NEBU_EXECUTION_MODE to: {execution_mode}")
 
         # Add PYTHONPATH
         pythonpath_value = CONTAINER_CODE_DIR
