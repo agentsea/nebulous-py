@@ -14,6 +14,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 import redis
 import socks
 
+from nebu.errors import RetriableError
+
 # from redis import ConnectionError, ResponseError # Removed unused imports
 
 # Define TypeVar for generic models
@@ -640,8 +642,24 @@ if __name__ == "__main__":
             print("[Worker] Exiting with status 0.")
             sys.exit(0)
 
+        except RetriableError as e:
+            # --- Handle Retriable Processing Error ---
+            print(f"[Worker] Retriable error processing message {message_id}: {e}")
+            tb = traceback.format_exc()
+            print(tb)
+            # Assert message_id is str before sending error
+            assert isinstance(message_id, str)
+            # Send error response (optional, consider suppressing later if too noisy)
+            _send_error_response(message_id, str(e), tb, return_stream, user_id)
+
+            # DO NOT Acknowledge the message for retriable errors
+
+            # --- 9. Exit with specific code for retriable failure ---
+            print("[Worker] Exiting with status 3 due to retriable error.")
+            sys.exit(3)
+
         except Exception as e:
-            # --- Handle Processing Error ---
+            # --- Handle Non-Retriable Processing Error ---
             print(f"[Worker] Error processing message {message_id}: {e}")
             tb = traceback.format_exc()
             print(tb)

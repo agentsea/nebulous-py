@@ -16,6 +16,8 @@ import redis
 import socks
 from redis import ConnectionError, ResponseError
 
+from nebu.errors import RetriableError
+
 # Define TypeVar for generic models
 T = TypeVar("T")
 
@@ -433,6 +435,13 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                     f"Subprocess for {message_id} completed successfully (return code 0)."
                 )
                 # Assume success handling (ack/response) was done by the worker
+            elif return_code == 3:
+                print(
+                    f"Subprocess for {message_id} reported a retriable error (exit code 3). Message will not be acknowledged."
+                )
+                # Optionally send an error response here, though the worker already did.
+                # _send_error_response(...)
+                # DO NOT Acknowledge the message here, let it be retried.
             else:
                 print(
                     f"Subprocess for {message_id} failed with exit code {return_code}."
@@ -550,6 +559,16 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             None,
             None,
         )  # Pass None for user_id if unavailable here
+        # Acknowledge message with code load failure to prevent reprocessing loop
+        try:
+            assert isinstance(REDIS_STREAM, str)
+            assert isinstance(REDIS_CONSUMER_GROUP, str)
+            r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
+            print(f"Acknowledged message {message_id} due to code load failure.")
+        except Exception as e_ack:
+            print(
+                f"CRITICAL: Failed to acknowledge message {message_id} after code load failure: {e_ack}"
+            )
         return  # Skip processing
 
     return_stream = None
@@ -796,6 +815,15 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         assert isinstance(REDIS_STREAM, str)
         assert isinstance(REDIS_CONSUMER_GROUP, str)
         r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
+
+    except RetriableError as e:
+        print(f"Retriable error processing message {message_id}: {e}")
+        traceback.print_exc()
+        _send_error_response(
+            message_id, str(e), traceback.format_exc(), return_stream, user_id
+        )
+        # DO NOT Acknowledge the message for retriable errors
+        print(f"Message {message_id} will be retried later.")
 
     except Exception as e:
         print(f"Error processing message {message_id}: {e}")

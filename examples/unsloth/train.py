@@ -192,8 +192,8 @@ def train_unsloth_sft(message: Message[TrainingRequest]) -> TrainingResponse:
 
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
-        data_collator=UnslothVisionDataCollator(model, tokenizer),  # Must use!
+        tokenizer=tokenizer,  # type: ignore
+        data_collator=UnslothVisionDataCollator(model, tokenizer),  # type: ignore
         train_dataset=converted_dataset,
         args=SFTConfig(
             per_device_train_batch_size=training_request.batch_size,
