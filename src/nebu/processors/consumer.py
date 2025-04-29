@@ -5,11 +5,12 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 import traceback
 import types
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
+from typing import IO, Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 
 import redis
 import socks
@@ -351,9 +352,22 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
     # --- Subprocess Execution Path ---
     if execution_mode == "subprocess":
         print(f"Processing message {message_id} in subprocess...")
+        process = None  # Initialize process variable
+
+        # Helper function to read and print stream lines
+        def stream_reader(stream: IO[str], prefix: str):
+            try:
+                for line in iter(stream.readline, ""):
+                    print(f"{prefix}: {line.strip()}", flush=True)
+            except Exception as e:
+                print(f"Error reading stream {prefix}: {e}")
+            finally:
+                stream.close()
+
         try:
             worker_cmd = [
                 sys.executable,
+                "-u",  # Force unbuffered stdout/stderr in the subprocess
                 "-m",
                 "nebu.processors.consumer_process_worker",
             ]
@@ -361,52 +375,109 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 {"message_id": message_id, "message_data": message_data}
             )
 
-            # Run the worker script as a module
-            # Inherit environment variables automatically
-            # Pass message data via stdin
-            result = subprocess.run(
+            # Start the worker process
+            process = subprocess.Popen(
                 worker_cmd,
-                input=process_input,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                capture_output=True,
-                check=True,  # Raise CalledProcessError on non-zero exit
-                env=os.environ.copy(),  # Ensure environment is passed
+                encoding="utf-8",
+                bufsize=1,  # Line buffered
+                env=os.environ.copy(),
             )
-            print(f"Subprocess for {message_id} completed successfully.")
-            if result.stdout:
-                print(f"Subprocess stdout:\n{result.stdout}")
-            # Assume the subprocess handled response sending and acknowledgement
 
-        except subprocess.CalledProcessError as e:
+            # Create threads to read stdout and stderr concurrently
+            stdout_thread = threading.Thread(
+                target=stream_reader,
+                args=(process.stdout, f"[Subprocess STDOUT {message_id[:8]}]"),
+            )
+            stderr_thread = threading.Thread(
+                target=stream_reader,
+                args=(process.stderr, f"[Subprocess STDERR {message_id[:8]}]"),
+            )
+
+            stdout_thread.start()
+            stderr_thread.start()
+
+            # Send input data to the subprocess
+            # Ensure process and stdin are valid before writing/closing
+            if process and process.stdin:
+                try:
+                    process.stdin.write(process_input)
+                    process.stdin.close()  # Signal end of input
+                except (BrokenPipeError, OSError) as e:
+                    # Handle cases where the process might have exited early
+                    print(
+                        f"Warning: Failed to write full input to subprocess {message_id}: {e}. It might have exited prematurely."
+                    )
+                    # Continue to wait and check return code
+            else:
+                print(
+                    f"Error: Subprocess stdin stream not available for {message_id}. Cannot send input."
+                )
+                # Handle this case - perhaps terminate and report error?
+                # For now, we'll let it proceed to wait() which will likely show an error code.
+
+            # Wait for the process to finish
+            return_code = (
+                process.wait() if process else -1
+            )  # Handle case where process is None
+
+            # Wait for reader threads to finish consuming remaining output
+            stdout_thread.join()
+            stderr_thread.join()
+
+            if return_code == 0:
+                print(
+                    f"Subprocess for {message_id} completed successfully (return code 0)."
+                )
+                # Assume success handling (ack/response) was done by the worker
+            else:
+                print(
+                    f"Subprocess for {message_id} failed with exit code {return_code}."
+                )
+                # Worker likely failed, send generic error and ACK here
+                _send_error_response(
+                    message_id,
+                    f"Subprocess execution failed with exit code {return_code}",
+                    "See consumer logs for subprocess stderr.",  # stderr was already printed
+                    message_data.get("return_stream"),
+                    message_data.get("user_id"),
+                )
+                # CRITICAL: Acknowledge the message here since the subprocess failed
+                try:
+                    assert isinstance(REDIS_STREAM, str)
+                    assert isinstance(REDIS_CONSUMER_GROUP, str)
+                    r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
+                    print(f"Acknowledged failed subprocess message {message_id}")
+                except Exception as e_ack:
+                    print(
+                        f"CRITICAL: Failed to acknowledge failed subprocess message {message_id}: {e_ack}"
+                    )
+
+        except FileNotFoundError:
             print(
-                f"Subprocess for message {message_id} failed with exit code {e.returncode}."
+                "FATAL: Worker script 'nebu.processors.consumer_process_worker' not found. Check PYTHONPATH."
             )
-            if e.stdout:
-                print(f"Subprocess stdout:\n{e.stdout}")
-            if e.stderr:
-                print(f"Subprocess stderr:\n{e.stderr}")
-
-            # Send a generic error message back, as the subprocess likely failed
-            # before it could send its specific error.
+            # Send error and ack if possible
             _send_error_response(
                 message_id,
-                f"Subprocess execution failed with exit code {e.returncode}",
-                e.stderr or "No stderr captured",
-                message_data.get(
-                    "return_stream"
-                ),  # Try to get return stream from original data
-                message_data.get("user_id"),  # Try to get user_id from original data
+                "Worker script not found",
+                traceback.format_exc(),
+                message_data.get("return_stream"),
+                message_data.get("user_id"),
             )
-
-            # CRITICAL: Acknowledge the message here since the subprocess failed
             try:
                 assert isinstance(REDIS_STREAM, str)
                 assert isinstance(REDIS_CONSUMER_GROUP, str)
                 r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
-                print(f"Acknowledged failed subprocess message {message_id}")
+                print(
+                    f"Acknowledged message {message_id} after worker script not found failure"
+                )
             except Exception as e_ack:
                 print(
-                    f"CRITICAL: Failed to acknowledge failed subprocess message {message_id}: {e_ack}"
+                    f"CRITICAL: Failed to acknowledge message {message_id} after worker script not found failure: {e_ack}"
                 )
 
         except Exception as e:
@@ -417,7 +488,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             # Also send an error and acknowledge
             _send_error_response(
                 message_id,
-                f"Failed to launch subprocess: {e}",
+                f"Failed to launch/manage subprocess: {e}",
                 traceback.format_exc(),
                 message_data.get("return_stream"),
                 message_data.get("user_id"),
@@ -427,12 +498,44 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 assert isinstance(REDIS_CONSUMER_GROUP, str)
                 r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
                 print(
-                    f"Acknowledged message {message_id} after subprocess launch failure"
+                    f"Acknowledged message {message_id} after subprocess launch/manage failure"
                 )
             except Exception as e_ack:
                 print(
-                    f"CRITICAL: Failed to acknowledge message {message_id} after subprocess launch failure: {e_ack}"
+                    f"CRITICAL: Failed to acknowledge message {message_id} after subprocess launch/manage failure: {e_ack}"
                 )
+            # Ensure process is terminated if it's still running after an error
+            if process and process.poll() is None:
+                print(
+                    f"Terminating potentially lingering subprocess for {message_id}..."
+                )
+                process.terminate()
+                process.wait(timeout=5)  # Give it a moment to terminate
+                if process.poll() is None:
+                    print(
+                        f"Subprocess for {message_id} did not terminate gracefully, killing."
+                    )
+                    process.kill()
+        finally:
+            # Ensure streams are closed even if threads failed or process is None
+            if process:
+                if process.stdout:
+                    try:
+                        process.stdout.close()
+                    except Exception:
+                        pass  # Ignore errors during cleanup close
+                if process.stderr:
+                    try:
+                        process.stderr.close()
+                    except Exception:
+                        pass  # Ignore errors during cleanup close
+                # Stdin should already be closed, but doesn't hurt to be safe
+                if process.stdin and not process.stdin.closed:
+                    try:
+                        process.stdin.close()
+                    except Exception:
+                        pass
+
         return  # Exit process_message after handling subprocess logic
 
     # --- Inline Execution Path (Original Logic) ---
