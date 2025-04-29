@@ -390,7 +390,8 @@ def processor(
     ports: Optional[List[V1PortRequest]] = None,
     proxy_port: Optional[int] = None,
     health_check: Optional[V1ContainerHealthCheck] = None,
-    execution_mode: str = "inline",  # Added parameter
+    execution_mode: str = "inline",
+    config: Optional[GlobalConfig] = None,
 ):
     def decorator(
         func: Callable[[Any], Any],
@@ -409,6 +410,9 @@ def processor(
         all_env = env or []
         processor_name = func.__name__
         all_volumes = volumes or []  # Initialize volumes list
+
+        # Use a local variable for config resolution
+        effective_config = config
 
         # --- Get Decorated Function File Path and Directory ---
         print("[DEBUG Decorator] Getting source file path for decorated function...")
@@ -445,9 +449,9 @@ def processor(
         # --- Get API Key ---
         print("[DEBUG Decorator] Loading Nebu configuration...")
         try:
-            pass
-            config = GlobalConfig.read()
-            current_server = config.get_current_server_config()
+            if not effective_config:
+                effective_config = GlobalConfig.read()
+            current_server = effective_config.get_current_server_config()
             if not current_server or not current_server.api_key:
                 raise ValueError("Nebu server configuration or API key not found.")
             api_key = current_server.api_key
