@@ -916,7 +916,13 @@ CLAIM_COUNT = 10  # Max messages to claim at once
 
 try:
     while True:
+        print(
+            f"[{datetime.now(timezone.utc).isoformat()}] --- Top of main loop ---"
+        )  # Added log
         # --- Check for Code Updates ---
+        print(
+            f"[{datetime.now(timezone.utc).isoformat()}] Checking for code updates..."
+        )  # Added log
         if entrypoint_abs_path:  # Should always be set after init
             try:
                 current_mtime = os.path.getmtime(entrypoint_abs_path)
@@ -968,8 +974,14 @@ try:
             print(
                 "[Consumer] Warning: Entrypoint absolute path not set, cannot check for code updates."
             )
+        print(
+            f"[{datetime.now(timezone.utc).isoformat()}] Finished checking for code updates."
+        )  # Added log
 
         # --- Claim Old Pending Messages ---
+        print(
+            f"[{datetime.now(timezone.utc).isoformat()}] Checking for pending messages to claim..."
+        )  # Added log
         try:
             if target_function is not None:  # Only claim if we can process
                 assert isinstance(REDIS_STREAM, str)
@@ -1027,7 +1039,7 @@ try:
 
                 if claimed_messages:
                     print(
-                        f"[Consumer] Claimed {len(claimed_messages[0][1])} pending message(s). Processing..."
+                        f"[{datetime.now(timezone.utc).isoformat()}] Claimed {claimed_messages} pending message(s). Processing..."
                     )
                     # Process claimed messages immediately
                     # Cast messages to expected type to satisfy type checker
@@ -1045,6 +1057,10 @@ try:
                     # After processing claimed messages, loop back to check for more potentially
                     # This avoids immediately blocking on XREADGROUP if there were claimed messages
                     continue
+                else:  # Added log
+                    print(
+                        f"[{datetime.now(timezone.utc).isoformat()}] No pending messages claimed."
+                    )  # Added log
 
         except ResponseError as e_claim:
             # Handle specific errors like NOGROUP gracefully if needed
@@ -1056,17 +1072,26 @@ try:
             else:
                 print(f"[Consumer] Error during XAUTOCLAIM: {e_claim}")
                 # Decide if this is fatal or recoverable
+                print(
+                    f"[{datetime.now(timezone.utc).isoformat()}] Error during XAUTOCLAIM: {e_claim}"
+                )  # Added log
                 time.sleep(5)  # Wait before retrying claim
         except ConnectionError as e_claim_conn:
             print(
                 f"Redis connection error during XAUTOCLAIM: {e_claim_conn}. Will attempt reconnect in main loop."
             )
             # Let the main ConnectionError handler below deal with reconnection
+            print(
+                f"[{datetime.now(timezone.utc).isoformat()}] Redis connection error during XAUTOCLAIM: {e_claim_conn}. Will attempt reconnect."
+            )  # Added log
             time.sleep(5)  # Avoid tight loop on connection errors during claim
         except Exception as e_claim_other:
             print(
                 f"[Consumer] Unexpected error during XAUTOCLAIM/processing claimed messages: {e_claim_other}"
             )
+            print(
+                f"[{datetime.now(timezone.utc).isoformat()}] Unexpected error during XAUTOCLAIM/processing claimed: {e_claim_other}"
+            )  # Added log
             traceback.print_exc()
             time.sleep(5)  # Wait before retrying
 
@@ -1085,27 +1110,42 @@ try:
         streams_arg: Dict[str, str] = {REDIS_STREAM: ">"}
 
         # With decode_responses=True, redis-py expects str types here
+        print(
+            f"[{datetime.now(timezone.utc).isoformat()}] Calling xreadgroup (block=5000ms)..."
+        )  # Added log
         messages = r.xreadgroup(
             REDIS_CONSUMER_GROUP,
             consumer_name,
-            streams_arg,  # type: ignore[arg-type]
+            streams_arg,  # type: ignore[arg-type] # Suppress linter warning
             count=1,
             block=5000,  # Use milliseconds for block
         )
 
         if not messages:
+            print(
+                f"[{datetime.now(timezone.utc).isoformat()}] xreadgroup timed out (no new messages)."
+            )  # Added log
             # print("[Consumer] No new messages.") # Reduce verbosity
             continue
+        # Removed the else block here
 
+        # If we reached here, messages is not empty.
         # Assert messages is not None to help type checker (already implied by `if not messages`)
         assert messages is not None
 
-        # Cast messages to expected type to satisfy type checker
+        # Cast messages to expected type to satisfy type checker (do it once)
         typed_messages = cast(
             List[Tuple[str, List[Tuple[str, Dict[str, str]]]]], messages
         )
         stream_name_str, stream_messages = typed_messages[0]
+        num_msgs = len(stream_messages)
 
+        # Log reception and count before processing
+        print(
+            f"[{datetime.now(timezone.utc).isoformat()}] xreadgroup returned {num_msgs} message(s). Processing..."
+        )  # Moved and combined log
+
+        # Process the received messages
         # for msg_id_bytes, msg_data_bytes_dict in stream_messages: # Original structure
         for (
             message_id_str,
