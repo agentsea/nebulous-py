@@ -590,7 +590,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 f"Expected parsed payload to be a dictionary, but got {type(raw_payload)}"
             )
 
-        # print(f"Raw payload: {raw_payload}") # Reduce verbosity
+        print(f"Raw payload: {raw_payload}")
 
         kind = raw_payload.get("kind", "")
         msg_id = raw_payload.get("id", "")
