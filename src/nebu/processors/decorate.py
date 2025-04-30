@@ -726,8 +726,6 @@ def processor(
             f"[DEBUG Decorator] Parameter '{param_name}' type hint: {param_type_str_repr}"
         )
 
-        if "return" not in type_hints:
-            raise TypeError(f"{processor_name} must have a return type hint")
         return_type = type_hints.get("return")
         return_type_str_repr = str(return_type)
         print(f"[DEBUG Decorator] Return type hint: {return_type_str_repr}")

@@ -783,27 +783,53 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         # Execute the function
         print("Executing function...")
         result = target_function(input_obj)
-        print(f"Result: {result}")  # Reduce verbosity
+        # print(f"Raw Result: {result}") # Debugging
 
-        # Convert result to dict if it's a Pydantic model
-        if hasattr(result, "model_dump"):  # Use model_dump for Pydantic v2+
-            result_content = result.model_dump(mode="json")  # Serialize properly
-        elif hasattr(result, "dict"):  # Fallback for older Pydantic
-            result_content = result.dict()
-        else:
-            result_content = result  # Assume JSON-serializable
+        result_content = None  # Default to None
+        if result is not None:  # Only process if there's a result
+            try:
+                if hasattr(result, "model_dump"):
+                    print("[Consumer] Result has model_dump, using it.")
+                    # Use 'json' mode to ensure serializability where possible
+                    result_content = result.model_dump(mode="json")
+                    # print(f"[Consumer] Result after model_dump: {result_content}") # Debugging
+                else:
+                    # Try standard json.dumps as a fallback to check serializability
+                    print(
+                        "[Consumer] Result has no model_dump, attempting json.dumps check."
+                    )
+                    try:
+                        # Test if it's serializable
+                        json.dumps(result)
+                        # If the above line doesn't raise TypeError, assign the original result
+                        result_content = result
+                        # print(f"[Consumer] Result assigned directly after json.dumps check passed: {result_content}") # Debugging
+                    except TypeError as e:
+                        print(
+                            f"[Consumer] Warning: Result is not JSON serializable: {e}. Discarding result."
+                        )
+                        result_content = None  # Explicitly set to None on failure
 
-        # Prepare the response
+            except (
+                Exception
+            ) as e:  # Catch other potential model_dump errors or unexpected issues
+                print(
+                    f"[Consumer] Warning: Unexpected error during result processing/serialization: {e}. Discarding result."
+                )
+                traceback.print_exc()
+                result_content = None
+
+        # Prepare the response (ensure 'content' key exists even if None)
         response = {
             "kind": "StreamResponseMessage",
             "id": message_id,
-            "content": result_content,
+            "content": result_content,  # Use the potentially None result_content
             "status": "success",
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),  # Use UTC
             "user_id": user_id,  # Pass user_id back
         }
 
-        # print(f"Response: {response}") # Reduce verbosity
+        # print(f"Final Response Content: {response['content']}") # Debugging
 
         # Send the result to the return stream
         if return_stream:
