@@ -104,6 +104,7 @@ class Message(BaseModel, Generic[T]):
     orgs: Optional[Any] = None
     handle: Optional[str] = None
     adapter: Optional[str] = None
+    api_key: Optional[str] = None
 
 
 class V1StreamMessage(BaseModel, Generic[T]):
@@ -116,6 +117,7 @@ class V1StreamMessage(BaseModel, Generic[T]):
     orgs: Optional[Any] = None
     handle: Optional[str] = None
     adapter: Optional[str] = None
+    api_key: Optional[str] = None
 
 
 class V1StreamResponseMessage(BaseModel):
@@ -137,6 +139,7 @@ class V1OpenAIStreamMessage(BaseModel):
     orgs: Optional[Any] = None
     handle: Optional[str] = None
     adapter: Optional[str] = None
+    api_key: Optional[str] = None
 
 
 class V1OpenAIStreamResponse(BaseModel):
