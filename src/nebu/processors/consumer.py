@@ -885,144 +885,240 @@ def _send_error_response(
 # Main loop
 print(f"Starting consumer for stream {REDIS_STREAM} in group {REDIS_CONSUMER_GROUP}")
 consumer_name = f"consumer-{os.getpid()}-{socket.gethostname()}"  # More unique name
+MIN_IDLE_TIME_MS = 60000  # Minimum idle time in milliseconds (e.g., 60 seconds)
+CLAIM_COUNT = 10  # Max messages to claim at once
 
 try:
     while True:
-        print("reading from stream...")
-        try:
-            # --- Check for Code Updates ---
-            if entrypoint_abs_path:  # Should always be set after init
-                try:
-                    current_mtime = os.path.getmtime(entrypoint_abs_path)
-                    if current_mtime > last_load_mtime:
-                        print(
-                            f"[Consumer] Detected change in entrypoint file: {entrypoint_abs_path}. Reloading code..."
-                        )
-                        (
-                            reloaded_target_func,
-                            reloaded_init_func,
-                            reloaded_module,
-                            reloaded_namespace,
-                            new_mtime,
-                        ) = load_or_reload_user_code(
-                            _module_path,
-                            _function_name,
-                            entrypoint_abs_path,
-                            _init_func_name,
-                            _included_object_sources,
-                        )
-
-                        if (
-                            reloaded_target_func is not None
-                            and reloaded_module is not None
-                        ):
-                            print(
-                                "[Consumer] Code reload successful. Updating functions."
-                            )
-                            target_function = reloaded_target_func
-                            init_function = reloaded_init_func  # Update init ref too, though it's already run
-                            imported_module = reloaded_module
-                            local_namespace = (
-                                reloaded_namespace  # Update namespace from includes
-                            )
-                            last_load_mtime = new_mtime
-                        else:
-                            print(
-                                "[Consumer] Code reload failed. Continuing with previously loaded code."
-                            )
-                            # Optionally: Send an alert/log prominently that reload failed
-
-                except FileNotFoundError:
-                    print(
-                        f"[Consumer] Error: Entrypoint file '{entrypoint_abs_path}' not found during check. Cannot reload."
-                    )
-                    # Mark as non-runnable? Or just log?
-                    target_function = None  # Stop processing until file reappears?
-                    imported_module = None
-                    last_load_mtime = 0  # Reset mtime to force check next time
-                except Exception as e_reload_check:
-                    print(f"[Consumer] Error checking/reloading code: {e_reload_check}")
-                    traceback.print_exc()
-            else:
-                print(
-                    "[Consumer] Warning: Entrypoint absolute path not set, cannot check for code updates."
-                )
-
-            # --- Read from Redis Stream ---
-            if target_function is None:
-                # If code failed to load initially or during reload, wait before retrying
-                print(
-                    "[Consumer] Target function not loaded, waiting 5s before checking again..."
-                )
-                time.sleep(5)
-                continue  # Skip reading from Redis until code is loaded
-
-            assert isinstance(REDIS_STREAM, str)
-            assert isinstance(REDIS_CONSUMER_GROUP, str)
-
-            streams_arg: Dict[str, str] = {REDIS_STREAM: ">"}
-
-            # With decode_responses=True, redis-py expects str types here
-            messages = r.xreadgroup(
-                REDIS_CONSUMER_GROUP,
-                consumer_name,
-                streams_arg,  # type: ignore[arg-type]
-                count=1,
-                block=5000,  # Use milliseconds for block
-            )
-
-            if not messages:
-                # print("[Consumer] No new messages.") # Reduce verbosity
-                continue
-
-            # Assert messages is not None to help type checker (already implied by `if not messages`)
-            assert messages is not None
-
-            # Cast messages to expected type to satisfy type checker
-            typed_messages = cast(
-                List[Tuple[str, List[Tuple[str, Dict[str, str]]]]], messages
-            )
-            stream_name_str, stream_messages = typed_messages[0]
-
-            # for msg_id_bytes, msg_data_bytes_dict in stream_messages: # Original structure
-            for (
-                message_id_str,
-                message_data_str_dict,
-            ) in stream_messages:  # Structure with decode_responses=True
-                # message_id_str = msg_id_bytes.decode('utf-8') # No longer needed
-                # Decode keys/values in the message data dict
-                # message_data_str_dict = { k.decode('utf-8'): v.decode('utf-8')
-                #                          for k, v in msg_data_bytes_dict.items() } # No longer needed
-                # print(f"Processing message {message_id_str}") # Reduce verbosity
-                # print(f"Message data: {message_data_str_dict}") # Reduce verbosity
-                process_message(message_id_str, message_data_str_dict)
-
-        except ConnectionError as e:
-            print(f"Redis connection error: {e}. Reconnecting in 5s...")
-            time.sleep(5)
-            # Attempt to reconnect explicitly
+        # --- Check for Code Updates ---
+        if entrypoint_abs_path:  # Should always be set after init
             try:
-                print("Attempting Redis reconnection...")
-                # Close existing potentially broken connection? `r.close()` if available
-                r = redis.from_url(REDIS_URL, decode_responses=True)
-                r.ping()
-                print("Reconnected to Redis.")
-            except Exception as recon_e:
-                print(f"Failed to reconnect to Redis: {recon_e}")
-                # Keep waiting
+                current_mtime = os.path.getmtime(entrypoint_abs_path)
+                if current_mtime > last_load_mtime:
+                    print(
+                        f"[Consumer] Detected change in entrypoint file: {entrypoint_abs_path}. Reloading code..."
+                    )
+                    (
+                        reloaded_target_func,
+                        reloaded_init_func,
+                        reloaded_module,
+                        reloaded_namespace,
+                        new_mtime,
+                    ) = load_or_reload_user_code(
+                        _module_path,
+                        _function_name,
+                        entrypoint_abs_path,
+                        _init_func_name,
+                        _included_object_sources,
+                    )
 
-        except ResponseError as e:
-            print(f"Redis command error: {e}")
-            # Should we exit or retry?
-            if "NOGROUP" in str(e):
-                print("Consumer group seems to have disappeared. Exiting.")
+                    if reloaded_target_func is not None and reloaded_module is not None:
+                        print("[Consumer] Code reload successful. Updating functions.")
+                        target_function = reloaded_target_func
+                        init_function = reloaded_init_func  # Update init ref too, though it's already run
+                        imported_module = reloaded_module
+                        local_namespace = (
+                            reloaded_namespace  # Update namespace from includes
+                        )
+                        last_load_mtime = new_mtime
+                    else:
+                        print(
+                            "[Consumer] Code reload failed. Continuing with previously loaded code."
+                        )
+                        # Optionally: Send an alert/log prominently that reload failed
+
+            except FileNotFoundError:
+                print(
+                    f"[Consumer] Error: Entrypoint file '{entrypoint_abs_path}' not found during check. Cannot reload."
+                )
+                # Mark as non-runnable? Or just log?
+                target_function = None  # Stop processing until file reappears?
+                imported_module = None
+                last_load_mtime = 0  # Reset mtime to force check next time
+            except Exception as e_reload_check:
+                print(f"[Consumer] Error checking/reloading code: {e_reload_check}")
+                traceback.print_exc()
+        else:
+            print(
+                "[Consumer] Warning: Entrypoint absolute path not set, cannot check for code updates."
+            )
+
+        # --- Claim Old Pending Messages ---
+        try:
+            if target_function is not None:  # Only claim if we can process
+                assert isinstance(REDIS_STREAM, str)
+                assert isinstance(REDIS_CONSUMER_GROUP, str)
+
+                # Claim messages pending for longer than MIN_IDLE_TIME_MS for *this* consumer
+                # xautoclaim returns (next_id, claimed_messages_list)
+                # Note: We don't need next_id if we always start from '0-0'
+                # but redis-py < 5 requires it to be handled.
+                # We only get messages assigned to *this* consumer_name
+                claim_result = r.xautoclaim(
+                    name=REDIS_STREAM,
+                    groupname=REDIS_CONSUMER_GROUP,
+                    consumername=consumer_name,
+                    min_idle_time=MIN_IDLE_TIME_MS,
+                    start_id="0-0",  # Check from the beginning of the PEL
+                    count=CLAIM_COUNT,
+                )
+
+                # Compatibility check for redis-py versions
+                # Newer versions (>=5.0) return a tuple: (next_id, messages, count_deleted)
+                # Older versions (e.g., 4.x) return a list: [next_id, messages] or just messages if redis < 6.2
+                # We primarily care about the 'messages' part.
+                claimed_messages = None
+                if isinstance(claim_result, tuple) and len(claim_result) >= 2:
+                    # next_id_bytes, claimed_messages = claim_result # Original structure
+                    _next_id, claimed_messages_list = claim_result[
+                        :2
+                    ]  # Handle tuple structure (>=5.0)
+                    # claimed_messages need to be processed like xreadgroup results
+                    # Wrap in the stream name structure expected by the processing loop
+                    if claimed_messages_list:
+                        # Assume decode_responses=True is set, so use string directly
+                        claimed_messages = [(REDIS_STREAM, claimed_messages_list)]
+
+                elif isinstance(claim_result, list) and claim_result:
+                    # Handle older redis-py versions or direct message list if redis server < 6.2
+                    # Check if the first element might be the next_id
+                    if isinstance(
+                        claim_result[0], (str, bytes)
+                    ):  # Likely [next_id, messages] structure
+                        if len(claim_result) > 1 and isinstance(claim_result[1], list):
+                            _next_id, claimed_messages_list = claim_result[:2]
+                            if claimed_messages_list:
+                                # Assume decode_responses=True is set
+                                claimed_messages = [
+                                    (REDIS_STREAM, claimed_messages_list)
+                                ]
+                    elif isinstance(
+                        claim_result[0], tuple
+                    ):  # Direct list of messages [[id, data], ...]
+                        claimed_messages_list = claim_result
+                        # Assume decode_responses=True is set
+                        claimed_messages = [(REDIS_STREAM, claimed_messages_list)]
+
+                if claimed_messages:
+                    print(
+                        f"[Consumer] Claimed {len(claimed_messages[0][1])} pending message(s). Processing..."
+                    )
+                    # Process claimed messages immediately
+                    # Cast messages to expected type to satisfy type checker
+                    typed_messages = cast(
+                        List[Tuple[str, List[Tuple[str, Dict[str, str]]]]],
+                        claimed_messages,
+                    )
+                    stream_name_str, stream_messages = typed_messages[0]
+                    for (
+                        message_id_str,
+                        message_data_str_dict,
+                    ) in stream_messages:
+                        print(f"[Consumer] Processing claimed message {message_id_str}")
+                        process_message(message_id_str, message_data_str_dict)
+                    # After processing claimed messages, loop back to check for more potentially
+                    # This avoids immediately blocking on XREADGROUP if there were claimed messages
+                    continue
+
+        except ResponseError as e_claim:
+            # Handle specific errors like NOGROUP gracefully if needed
+            if "NOGROUP" in str(e_claim):
+                print(
+                    f"Consumer group {REDIS_CONSUMER_GROUP} not found during xautoclaim. Exiting."
+                )
                 sys.exit(1)
-            time.sleep(1)
-
-        except Exception as e:
-            print(f"Unexpected error in main loop: {e}")
+            else:
+                print(f"[Consumer] Error during XAUTOCLAIM: {e_claim}")
+                # Decide if this is fatal or recoverable
+                time.sleep(5)  # Wait before retrying claim
+        except ConnectionError as e_claim_conn:
+            print(
+                f"Redis connection error during XAUTOCLAIM: {e_claim_conn}. Will attempt reconnect in main loop."
+            )
+            # Let the main ConnectionError handler below deal with reconnection
+            time.sleep(5)  # Avoid tight loop on connection errors during claim
+        except Exception as e_claim_other:
+            print(
+                f"[Consumer] Unexpected error during XAUTOCLAIM/processing claimed messages: {e_claim_other}"
+            )
             traceback.print_exc()
-            time.sleep(1)
+            time.sleep(5)  # Wait before retrying
+
+        # --- Read New Messages from Redis Stream ---
+        if target_function is None:
+            # If code failed to load initially or during reload, wait before retrying
+            print(
+                "[Consumer] Target function not loaded, waiting 5s before checking again..."
+            )
+            time.sleep(5)
+            continue  # Skip reading from Redis until code is loaded
+
+        assert isinstance(REDIS_STREAM, str)
+        assert isinstance(REDIS_CONSUMER_GROUP, str)
+
+        streams_arg: Dict[str, str] = {REDIS_STREAM: ">"}
+
+        # With decode_responses=True, redis-py expects str types here
+        messages = r.xreadgroup(
+            REDIS_CONSUMER_GROUP,
+            consumer_name,
+            streams_arg,  # type: ignore[arg-type]
+            count=1,
+            block=5000,  # Use milliseconds for block
+        )
+
+        if not messages:
+            # print("[Consumer] No new messages.") # Reduce verbosity
+            continue
+
+        # Assert messages is not None to help type checker (already implied by `if not messages`)
+        assert messages is not None
+
+        # Cast messages to expected type to satisfy type checker
+        typed_messages = cast(
+            List[Tuple[str, List[Tuple[str, Dict[str, str]]]]], messages
+        )
+        stream_name_str, stream_messages = typed_messages[0]
+
+        # for msg_id_bytes, msg_data_bytes_dict in stream_messages: # Original structure
+        for (
+            message_id_str,
+            message_data_str_dict,
+        ) in stream_messages:  # Structure with decode_responses=True
+            # message_id_str = msg_id_bytes.decode('utf-8') # No longer needed
+            # Decode keys/values in the message data dict
+            # message_data_str_dict = { k.decode('utf-8'): v.decode('utf-8')
+            #                          for k, v in msg_data_bytes_dict.items() } # No longer needed
+            # print(f"Processing message {message_id_str}") # Reduce verbosity
+            # print(f"Message data: {message_data_str_dict}") # Reduce verbosity
+            process_message(message_id_str, message_data_str_dict)
+
+except ConnectionError as e:
+    print(f"Redis connection error: {e}. Reconnecting in 5s...")
+    time.sleep(5)
+    # Attempt to reconnect explicitly
+    try:
+        print("Attempting Redis reconnection...")
+        # Close existing potentially broken connection? `r.close()` if available
+        r = redis.from_url(REDIS_URL, decode_responses=True)
+        r.ping()
+        print("Reconnected to Redis.")
+    except Exception as recon_e:
+        print(f"Failed to reconnect to Redis: {recon_e}")
+        # Keep waiting
+
+except ResponseError as e:
+    print(f"Redis command error: {e}")
+    # Should we exit or retry?
+    if "NOGROUP" in str(e):
+        print("Consumer group seems to have disappeared. Exiting.")
+        sys.exit(1)
+    time.sleep(1)
+
+except Exception as e:
+    print(f"Unexpected error in main loop: {e}")
+    traceback.print_exc()
+    time.sleep(1)
 
 finally:
     print("Consumer loop exited.")
