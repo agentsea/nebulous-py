@@ -590,7 +590,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 f"Expected parsed payload to be a dictionary, but got {type(raw_payload)}"
             )
 
-        print(f"Raw payload: {raw_payload}")
+        print(f">> Raw payload: {raw_payload}")
 
         kind = raw_payload.get("kind", "")
         msg_id = raw_payload.get("id", "")
@@ -612,7 +612,8 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         orgs = raw_payload.get("organizations")
         handle = raw_payload.get("handle")
         adapter = raw_payload.get("adapter")
-        api_key = raw_payload.get("api_key")  # Extract api_key
+        api_key = raw_payload.get("api_key")
+        print(">> Extracted API key:", api_key)
 
         # --- Health Check Logic (Keep as is) ---
         if kind == "HealthCheck":
@@ -704,7 +705,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                             orgs=orgs,
                             handle=handle,
                             adapter=adapter,
-                            api_key=api_key,  # Add api_key
+                            api_key=api_key,
                         )
                     except Exception as e:
                         print(
@@ -721,7 +722,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                             orgs=orgs,
                             handle=handle,
                             adapter=adapter,
-                            api_key=api_key,  # Add api_key
+                            api_key=api_key,
                         )
                 else:
                     # No content type name or class found, use raw content
@@ -735,7 +736,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                         orgs=orgs,
                         handle=handle,
                         adapter=adapter,
-                        api_key=api_key,  # Add api_key
+                        api_key=api_key,
                     )
             else:  # Not a stream message, use the function's parameter type
                 param_type_name = (
