@@ -456,6 +456,7 @@ if __name__ == "__main__":
             orgs = raw_payload.get("organizations")
             handle = raw_payload.get("handle")
             adapter = raw_payload.get("adapter")
+            api_key = raw_payload.get("api_key")
 
             # --- Health Check Logic ---
             if kind == "HealthCheck":
@@ -535,6 +536,7 @@ if __name__ == "__main__":
                                     orgs=orgs,
                                     handle=handle,
                                     adapter=adapter,
+                                    api_key=api_key,
                                 )
                             except Exception as e:
                                 print(
@@ -550,6 +552,7 @@ if __name__ == "__main__":
                                     orgs=orgs,
                                     handle=handle,
                                     adapter=adapter,
+                                    api_key=api_key,
                                 )
                         else:
                             input_obj = message_class(
@@ -562,6 +565,7 @@ if __name__ == "__main__":
                                 orgs=orgs,
                                 handle=handle,
                                 adapter=adapter,
+                                api_key=api_key,
                             )
                     else:  # Not a stream message
                         param_type_name = param_type_str
