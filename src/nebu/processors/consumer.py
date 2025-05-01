@@ -919,69 +919,89 @@ consumer_name = f"consumer-{os.getpid()}-{socket.gethostname()}"  # More unique 
 MIN_IDLE_TIME_MS = 60000  # Minimum idle time in milliseconds (e.g., 60 seconds)
 CLAIM_COUNT = 10  # Max messages to claim at once
 
+# Check if hot reloading should be disabled
+disable_hot_reload = os.environ.get("NEBU_DISABLE_HOT_RELOAD", "0").lower() in [
+    "1",
+    "true",
+]
+print(
+    f"[Consumer] Hot code reloading is {'DISABLED' if disable_hot_reload else 'ENABLED'}."
+)
+
 try:
     while True:
         print(
             f"[{datetime.now(timezone.utc).isoformat()}] --- Top of main loop ---"
         )  # Added log
         # --- Check for Code Updates ---
-        print(
-            f"[{datetime.now(timezone.utc).isoformat()}] Checking for code updates..."
-        )  # Added log
-        if entrypoint_abs_path:  # Should always be set after init
-            try:
-                current_mtime = os.path.getmtime(entrypoint_abs_path)
-                if current_mtime > last_load_mtime:
-                    print(
-                        f"[Consumer] Detected change in entrypoint file: {entrypoint_abs_path}. Reloading code..."
-                    )
-                    (
-                        reloaded_target_func,
-                        reloaded_init_func,
-                        reloaded_module,
-                        reloaded_namespace,
-                        new_mtime,
-                    ) = load_or_reload_user_code(
-                        _module_path,
-                        _function_name,
-                        entrypoint_abs_path,
-                        _init_func_name,
-                        _included_object_sources,
-                    )
-
-                    if reloaded_target_func is not None and reloaded_module is not None:
-                        print("[Consumer] Code reload successful. Updating functions.")
-                        target_function = reloaded_target_func
-                        init_function = reloaded_init_func  # Update init ref too, though it's already run
-                        imported_module = reloaded_module
-                        local_namespace = (
-                            reloaded_namespace  # Update namespace from includes
-                        )
-                        last_load_mtime = new_mtime
-                    else:
-                        print(
-                            "[Consumer] Code reload failed. Continuing with previously loaded code."
-                        )
-                        # Optionally: Send an alert/log prominently that reload failed
-
-            except FileNotFoundError:
-                print(
-                    f"[Consumer] Error: Entrypoint file '{entrypoint_abs_path}' not found during check. Cannot reload."
-                )
-                # Mark as non-runnable? Or just log?
-                target_function = None  # Stop processing until file reappears?
-                imported_module = None
-                last_load_mtime = 0  # Reset mtime to force check next time
-            except Exception as e_reload_check:
-                print(f"[Consumer] Error checking/reloading code: {e_reload_check}")
-                traceback.print_exc()
-        else:
+        if not disable_hot_reload:
             print(
-                "[Consumer] Warning: Entrypoint absolute path not set, cannot check for code updates."
+                f"[{datetime.now(timezone.utc).isoformat()}] Checking for code updates..."
+            )  # Added log
+            if entrypoint_abs_path:  # Should always be set after init
+                try:
+                    current_mtime = os.path.getmtime(entrypoint_abs_path)
+                    if current_mtime > last_load_mtime:
+                        print(
+                            f"[Consumer] Detected change in entrypoint file: {entrypoint_abs_path}. Reloading code..."
+                        )
+                        (
+                            reloaded_target_func,
+                            reloaded_init_func,
+                            reloaded_module,
+                            reloaded_namespace,
+                            new_mtime,
+                        ) = load_or_reload_user_code(
+                            _module_path,
+                            _function_name,
+                            entrypoint_abs_path,
+                            _init_func_name,
+                            _included_object_sources,
+                        )
+
+                        if (
+                            reloaded_target_func is not None
+                            and reloaded_module is not None
+                        ):
+                            print(
+                                "[Consumer] Code reload successful. Updating functions."
+                            )
+                            target_function = reloaded_target_func
+                            init_function = reloaded_init_func  # Update init ref too, though it's already run
+                            imported_module = reloaded_module
+                            local_namespace = (
+                                reloaded_namespace  # Update namespace from includes
+                            )
+                            last_load_mtime = new_mtime
+                        else:
+                            print(
+                                "[Consumer] Code reload failed. Continuing with previously loaded code."
+                            )
+                            # Optionally: Send an alert/log prominently that reload failed
+
+                except FileNotFoundError:
+                    print(
+                        f"[Consumer] Error: Entrypoint file '{entrypoint_abs_path}' not found during check. Cannot reload."
+                    )
+                    # Mark as non-runnable? Or just log?
+                    target_function = None  # Stop processing until file reappears?
+                    imported_module = None
+                    last_load_mtime = 0  # Reset mtime to force check next time
+                except Exception as e_reload_check:
+                    print(f"[Consumer] Error checking/reloading code: {e_reload_check}")
+                    traceback.print_exc()
+            else:
+                print(
+                    "[Consumer] Warning: Entrypoint absolute path not set, cannot check for code updates."
+                )
+            print(
+                f"[{datetime.now(timezone.utc).isoformat()}] Finished checking for code updates."
+            )  # Added log
+        else:
+            # Log that hot reload is skipped if it's disabled
+            print(
+                f"[{datetime.now(timezone.utc).isoformat()}] Hot reload check skipped (NEBU_DISABLE_HOT_RELOAD=1)."
             )
-        print(
-            f"[{datetime.now(timezone.utc).isoformat()}] Finished checking for code updates."
-        )  # Added log
 
         # --- Claim Old Pending Messages ---
         print(

@@ -42,13 +42,14 @@ class Container:
         proxy_port: Optional[int] = None,
         authz: Optional[V1AuthzConfig] = None,
         config: Optional[GlobalConfig] = None,
+        api_key: Optional[str] = None,
     ):
         # Fallback to a default config if none is provided
         config = config or GlobalConfig.read()
         current_server = config.get_current_server_config()
         if not current_server:
             raise ValueError("No current server config found")
-        self.api_key = current_server.api_key
+        self.api_key = api_key or current_server.api_key
         self.nebu_host = current_server.server
         self.config = config
 
@@ -250,6 +251,7 @@ class Container:
         name: Optional[str] = None,
         namespace: Optional[str] = None,
         config: Optional[GlobalConfig] = None,
+        api_key: Optional[str] = None,
     ) -> List[V1Container]:
         """
         Get a list of containers that match the optional name and/or namespace filters.
@@ -258,7 +260,7 @@ class Container:
         current_server = config.get_current_server_config()
         if not current_server:
             raise ValueError("No current server config found")
-        api_key = current_server.api_key
+        api_key = api_key or current_server.api_key
         nebu_host = current_server.server
 
         containers_url = f"{nebu_host}/v1/containers"
@@ -292,6 +294,7 @@ class Container:
         name: str,
         namespace: Optional[str] = None,
         config: Optional[GlobalConfig] = None,
+        api_key: Optional[str] = None,
     ):
         """
         Get a container from the remote server.
@@ -307,7 +310,7 @@ class Container:
         current_server = out.config.get_current_server_config()
         if not current_server:
             raise ValueError("No current server config found")
-        out.api_key = current_server.api_key
+        out.api_key = api_key or current_server.api_key
         out.nebu_host = current_server.server
         out.containers_url = f"{out.nebu_host}/v1/containers"
 

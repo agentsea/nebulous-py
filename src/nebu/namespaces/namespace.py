@@ -22,6 +22,7 @@ class Namespace:
         labels: Optional[Dict[str, str]] = None,
         owner: Optional[str] = None,
         config: Optional[GlobalConfig] = None,
+        api_key: Optional[str] = None,
     ):
         self.config = config or GlobalConfig.read()
         if not self.config:
@@ -30,7 +31,7 @@ class Namespace:
         if not current_server:
             raise ValueError("No server config found")
         self.current_server = current_server
-        self.api_key = current_server.api_key
+        self.api_key = api_key or current_server.api_key
         self.nebu_host = current_server.server
         self.name = name
         self.labels = labels
@@ -80,11 +81,12 @@ class Namespace:
         cls,
         name: str,
         config: Optional[GlobalConfig] = None,
+        api_key: Optional[str] = None,
     ):
         """
         Get a Namespace from the remote server.
         """
-        namespaces = cls.get(name=name, config=config)
+        namespaces = cls.get(name=name, config=config, api_key=api_key)
         if not namespaces:
             raise ValueError("Namespace not found")
         namespace_v1 = namespaces[0]
@@ -97,7 +99,7 @@ class Namespace:
         out.current_server = out.config.get_current_server_config()
         if not out.current_server:
             raise ValueError("No server config found")
-        out.api_key = out.current_server.api_key
+        out.api_key = api_key or out.current_server.api_key
         out.nebu_host = out.current_server.server
         out.namespaces_url = f"{out.nebu_host}/v1/namespaces"
         out.name = name
@@ -109,6 +111,7 @@ class Namespace:
         cls,
         name: Optional[str] = None,
         config: Optional[GlobalConfig] = None,
+        api_key: Optional[str] = None,
     ) -> List[V1Namespace]:
         """
         Get a list of Namespaces that optionally match the name filter.
@@ -119,11 +122,12 @@ class Namespace:
         current_server = config.get_current_server_config()
         if not current_server:
             raise ValueError("No server config found")
+        api_key = api_key or current_server.api_key
         namespaces_url = f"{current_server.server}/v1/namespaces"
 
         response = requests.get(
             namespaces_url,
-            headers={"Authorization": f"Bearer {current_server.api_key}"},
+            headers={"Authorization": f"Bearer {api_key}"},
         )
         response.raise_for_status()
 

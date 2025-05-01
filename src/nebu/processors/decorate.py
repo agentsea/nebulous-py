@@ -392,6 +392,7 @@ def processor(
     health_check: Optional[V1ContainerHealthCheck] = None,
     execution_mode: str = "inline",
     config: Optional[GlobalConfig] = None,
+    hot_reload: bool = True,
 ):
     def decorator(
         func: Callable[[Any], Any],
@@ -1051,6 +1052,28 @@ def processor(
         # Add Execution Mode
         all_env.append(V1EnvVar(key="NEBU_EXECUTION_MODE", value=execution_mode))
         print(f"[DEBUG Decorator] Set NEBU_EXECUTION_MODE to: {execution_mode}")
+
+        # Add Hot Reload Configuration
+        if not hot_reload:
+            all_env.append(V1EnvVar(key="NEBU_DISABLE_HOT_RELOAD", value="1"))
+            print(
+                "[DEBUG Decorator] Set NEBU_DISABLE_HOT_RELOAD to: 1 (Hot reload disabled)"
+            )
+        else:
+            # Ensure it's explicitly '0' or unset if enabled (consumer defaults to enabled if var missing)
+            # Setting to "0" might be clearer than removing it if it was added by other means.
+            # Check if it exists and update, otherwise add "0"
+            existing_hot_reload_var = next(
+                (var for var in all_env if var.key == "NEBU_DISABLE_HOT_RELOAD"), None
+            )
+            if existing_hot_reload_var:
+                existing_hot_reload_var.value = "0"
+            else:
+                # Not strictly needed as consumer defaults to enabled, but explicit is good.
+                all_env.append(V1EnvVar(key="NEBU_DISABLE_HOT_RELOAD", value="0"))
+            print(
+                "[DEBUG Decorator] Hot reload enabled (NEBU_DISABLE_HOT_RELOAD=0 or unset)"
+            )
 
         # Add PYTHONPATH
         pythonpath_value = CONTAINER_CODE_DIR

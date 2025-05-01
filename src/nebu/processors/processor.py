@@ -97,6 +97,7 @@ class Processor(Generic[InputType, OutputType]):
         max_replicas: Optional[int] = None,
         scale_config: Optional[V1Scale] = None,
         config: Optional[GlobalConfig] = None,
+        api_key: Optional[str] = None,
         no_delete: bool = False,
     ):
         self.config = config or GlobalConfig.read()
@@ -106,7 +107,7 @@ class Processor(Generic[InputType, OutputType]):
         if not current_server:
             raise ValueError("No server config found")
         self.current_server = current_server
-        self.api_key = current_server.api_key
+        self.api_key = api_key or current_server.api_key
         self.orign_host = current_server.server
         self.name = name
         self.namespace = namespace
@@ -298,11 +299,14 @@ class Processor(Generic[InputType, OutputType]):
         name: str,
         namespace: Optional[str] = None,
         config: Optional[GlobalConfig] = None,
+        api_key: Optional[str] = None,
     ):
         """
         Get a Processor from the remote server.
         """
-        processors = cls.get(namespace=namespace, name=name, config=config)
+        processors = cls.get(
+            namespace=namespace, name=name, config=config, api_key=api_key
+        )
         if not processors:
             raise ValueError("Processor not found")
         processor_v1 = processors[0]
@@ -315,7 +319,7 @@ class Processor(Generic[InputType, OutputType]):
         out.current_server = out.config.get_current_server_config()
         if not out.current_server:
             raise ValueError("No server config found")
-        out.api_key = out.current_server.api_key
+        out.api_key = api_key or out.current_server.api_key
         out.orign_host = out.current_server.server
         out.processors_url = f"{out.orign_host}/v1/processors"
         out.name = name
@@ -337,6 +341,7 @@ class Processor(Generic[InputType, OutputType]):
         name: Optional[str] = None,
         namespace: Optional[str] = None,
         config: Optional[GlobalConfig] = None,
+        api_key: Optional[str] = None,
     ) -> List[V1Processor]:
         """
         Get a list of Processors that match the optional name and/or namespace filters.
@@ -351,7 +356,7 @@ class Processor(Generic[InputType, OutputType]):
 
         response = requests.get(
             processors_url,
-            headers={"Authorization": f"Bearer {current_server.api_key}"},
+            headers={"Authorization": f"Bearer {api_key or current_server.api_key}"},
         )
         response.raise_for_status()
 
