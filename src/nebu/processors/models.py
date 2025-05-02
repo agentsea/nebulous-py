@@ -92,6 +92,7 @@ class V1UpdateProcessor(BaseModel):
 class V1StreamData(BaseModel):
     content: Any = None
     wait: Optional[bool] = None
+    user_key: Optional[str] = None
 
 
 class Message(BaseModel, Generic[T]):
