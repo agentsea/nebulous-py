@@ -7,6 +7,8 @@ import redis
 import socks  # Add socks import
 from pydantic import BaseModel, Field
 
+from nebu.logging import logger  # Import the logger
+
 
 class OwnedValue(BaseModel):
     created_at: int = Field(default_factory=lambda: int(time.time()))
@@ -30,11 +32,11 @@ class Cache:
         Also checks for REDIS_URL and prefers that if set.
         """
         redis_url = os.environ.get("REDIS_URL")
-        print("REDIS_URL: ", redis_url)
+        logger.debug(f"REDIS_URL: {redis_url}")
         namespace = os.environ.get("NEBU_NAMESPACE")
         if not namespace:
             raise ValueError("NEBU_NAMESPACE environment variable is not set")
-        print("NAMESPACE: ", namespace)
+        logger.debug(f"NAMESPACE: {namespace}")
         self.redis_client = None
         connection_info = ""
 
@@ -43,9 +45,11 @@ class Cache:
             # Use the proxy settings provided by tailscaled
             socks.set_default_proxy(socks.SOCKS5, "localhost", 1055)
             socket.socket = socks.socksocket
-            print("Configured SOCKS5 proxy for socket connections via localhost:1055")
+            logger.info(
+                "Configured SOCKS5 proxy for socket connections via localhost:1055"
+            )
         except Exception as proxy_err:
-            print(f"Failed to configure SOCKS proxy: {proxy_err}")
+            logger.warning(f"Failed to configure SOCKS proxy: {proxy_err}")
             # Depending on requirements, you might want to raise an error here
             # or proceed without the proxy if it's optional.
             # For now, we'll print the error and continue, but the Redis connection
@@ -70,12 +74,12 @@ class Cache:
 
             # Ping the server to ensure connection is established
             self.redis_client.ping()
-            print(f"Successfully connected to Redis using {connection_info}")
+            logger.info(f"Successfully connected to Redis using {connection_info}")
 
             self.prefix = f"cache:{namespace}"
-            print("using prefix", self.prefix)
+            logger.info(f"Using cache prefix: {self.prefix}")
         except Exception as e:
-            print(f"Error connecting to Redis: {e}")
+            logger.error(f"Error connecting to Redis: {e}")
             # Ensure client is None if connection fails at any point
             self.redis_client = None
 
@@ -85,7 +89,7 @@ class Cache:
         Returns None if the key does not exist or connection failed.
         """
         if not self.redis_client:
-            print("Redis client not connected.")
+            logger.warning("Redis client not connected.")
             return None
         try:
             key = f"{self.prefix}:{key}"
@@ -93,7 +97,7 @@ class Cache:
             result = self.redis_client.get(key)
             return cast(str | None, result)
         except Exception as e:
-            print(f"Error getting key '{key}' from Redis: {e}")
+            logger.error(f"Error getting key '{key}' from Redis: {e}")
             return None
 
     def set(self, key: str, value: str, expiry_seconds: int | None = None) -> bool:
@@ -103,7 +107,7 @@ class Cache:
         Returns True if successful, False otherwise (e.g., connection failed).
         """
         if not self.redis_client:
-            print("Redis client not connected.")
+            logger.warning("Redis client not connected.")
             return False
         try:
             key = f"{self.prefix}:{key}"
@@ -116,5 +120,5 @@ class Cache:
                 result = self.redis_client.set(key, value)
                 return cast(bool, result)
         except Exception as e:
-            print(f"Error setting key '{key}' in Redis: {e}")
+            logger.error(f"Error setting key '{key}' in Redis: {e}")
             return False

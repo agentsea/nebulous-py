@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 import requests
 
 from nebu.config import GlobalConfig
+from nebu.logging import logger
 from nebu.namespaces.models import (
     V1Namespace,
     V1NamespaceMetaRequest,
@@ -44,7 +45,7 @@ class Namespace:
         )
         response.raise_for_status()
         resp_json = response.json()
-        print(resp_json)
+        logger.debug(resp_json)
         existing_namespaces = V1Namespaces.model_validate(resp_json)
         self.namespace: Optional[V1Namespace] = next(
             (
@@ -57,7 +58,7 @@ class Namespace:
 
         # If not found, create
         if not self.namespace:
-            print(f"Creating namespace {name}")
+            logger.info(f"Creating namespace {name}")
             # Create metadata and namespace request
             metadata = V1NamespaceMetaRequest(name=name, labels=labels, owner=owner)
 
@@ -72,9 +73,11 @@ class Namespace:
             )
             create_response.raise_for_status()
             self.namespace = V1Namespace.model_validate(create_response.json())
-            print(f"Created Namespace {self.namespace.metadata.name}")
+            logger.info(f"Created Namespace {self.namespace.metadata.name}")
         else:
-            print(f"Found Namespace {self.namespace.metadata.name}, no update needed")
+            logger.info(
+                f"Found Namespace {self.namespace.metadata.name}, no update needed"
+            )
 
     @classmethod
     def load(

@@ -6,6 +6,7 @@ import requests
 from pydantic import BaseModel
 
 from nebu.config import GlobalConfig
+from nebu.logging import logger
 from nebu.meta import V1ResourceMetaRequest, V1ResourceReference
 from nebu.processors.models import (
     V1ContainerRequest,
@@ -26,11 +27,13 @@ def _fetch_and_print_logs(log_url: str, api_key: str, processor_name: str):
     """Helper function to fetch logs in a separate thread."""
     try:
         headers = {"Authorization": f"Bearer {api_key}"}
-        print(f"--- Attempting to stream logs for {processor_name} from {log_url} ---")
+        logger.info(
+            f"--- Attempting to stream logs for {processor_name} from {log_url} ---"
+        )
         # Use stream=True for potentially long-lived connections and timeout
         with requests.get(log_url, headers=headers, stream=True, timeout=300) as r:
             r.raise_for_status()
-            print(f"--- Streaming logs for {processor_name} ---")
+            logger.info(f"--- Streaming logs for {processor_name} ---")
             for line in r.iter_lines():
                 if not line:
                     continue
@@ -45,37 +48,42 @@ def _fetch_and_print_logs(log_url: str, api_key: str, processor_name: str):
                         for container, log_content in log_data.items():
                             # Ensure log_content is a string before printing
                             if isinstance(log_content, str):
-                                print(f"[{processor_name}][{container}] {log_content}")
+                                logger.info(
+                                    f"[{processor_name}][{container}] {log_content}"
+                                )
                             else:
                                 # Handle cases where log_content might not be a string
-                                print(
+                                logger.warning(
                                     f"[{processor_name}][{container}] Unexpected log format: {log_content}"
                                 )
                     else:
                         # If not a dict, print the raw line with a warning
-                        print(
+                        logger.warning(
                             f"[{processor_name}] Unexpected log structure (not a dict): {decoded_line}"
                         )
 
                 except json.JSONDecodeError:
                     # If JSON parsing fails, print the original line as fallback
-                    print(f"[{processor_name}] {line.decode('utf-8')} (raw/non-JSON)")
+                    logger.warning(
+                        f"[{processor_name}] {line.decode('utf-8')} (raw/non-JSON)"
+                    )
                 except Exception as e:
                     # Catch other potential errors during line processing
-                    print(f"Error processing log line for {processor_name}: {e}")
+                    logger.error(f"Error processing log line for {processor_name}: {e}")
 
-        print(f"--- Log stream ended for {processor_name} ---")
+        logger.info(f"--- Log stream ended for {processor_name} ---")
     except requests.exceptions.Timeout:
-        print(f"Log stream connection timed out for {processor_name}.")
+        logger.warning(f"Log stream connection timed out for {processor_name}.")
     except requests.exceptions.RequestException as e:
         # Handle potential API errors gracefully
-        print(f"Error fetching logs for {processor_name} from {log_url}: {e}")
+        logger.error(f"Error fetching logs for {processor_name} from {log_url}: {e}")
         if e.response is not None:
-            print(
+            # Log response details at a debug level or keep as error if critical
+            logger.error(
                 f"Response status: {e.response.status_code}, Response body: {e.response.text}"
             )
     except Exception as e:
-        print(
+        logger.error(
             f"An unexpected error occurred while fetching logs for {processor_name}: {e}"
         )
 
@@ -130,10 +138,10 @@ class Processor(Generic[InputType, OutputType]):
         if not namespace:
             namespace = "-"
 
-        print(f"Using namespace: {namespace}")
+        logger.info(f"Using namespace: {namespace}")
 
         existing_processors = V1Processors.model_validate(response.json())
-        print(f"Existing processors: {existing_processors}")
+        logger.debug(f"Existing processors: {existing_processors}")
         self.processor: Optional[V1Processor] = next(
             (
                 processor_val
@@ -143,11 +151,11 @@ class Processor(Generic[InputType, OutputType]):
             ),
             None,
         )
-        print(f"Processor: {self.processor}")
+        logger.debug(f"Processor: {self.processor}")
 
         # If not found, create
         if not self.processor:
-            print("Creating processor")
+            logger.info("Creating processor")
             # Create metadata and processor request
             metadata = V1ResourceMetaRequest(
                 name=name, namespace=namespace, labels=labels
@@ -163,8 +171,8 @@ class Processor(Generic[InputType, OutputType]):
                 scale=scale_config,
             )
 
-            print("Request:")
-            print(processor_request.model_dump(exclude_none=True))
+            logger.debug("Request:")
+            logger.debug(processor_request.model_dump(exclude_none=True))
             create_response = requests.post(
                 self.processors_url,
                 json=processor_request.model_dump(exclude_none=True),
@@ -172,10 +180,10 @@ class Processor(Generic[InputType, OutputType]):
             )
             create_response.raise_for_status()
             self.processor = V1Processor.model_validate(create_response.json())
-            print(f"Created Processor {self.processor.metadata.name}")
+            logger.info(f"Created Processor {self.processor.metadata.name}")
         else:
             # Else, update
-            print(
+            logger.info(
                 f"Found Processor {self.processor.metadata.name}, updating if necessary"
             )
 
@@ -189,8 +197,8 @@ class Processor(Generic[InputType, OutputType]):
                 no_delete=no_delete,
             )
 
-            print("Update request:")
-            print(update_processor.model_dump(exclude_none=True))
+            logger.debug("Update request:")
+            logger.debug(update_processor.model_dump(exclude_none=True))
             patch_response = requests.patch(
                 f"{self.processors_url}/{self.processor.metadata.namespace}/{self.processor.metadata.name}",
                 json=update_processor.model_dump(exclude_none=True),
@@ -198,7 +206,7 @@ class Processor(Generic[InputType, OutputType]):
             )
             patch_response.raise_for_status()
             self.processor = V1Processor.model_validate(patch_response.json())
-            print(f"Updated Processor {self.processor.metadata.name}")
+            logger.info(f"Updated Processor {self.processor.metadata.name}")
 
     def __call__(
         self,
@@ -264,14 +272,16 @@ class Processor(Generic[InputType, OutputType]):
                 )
                 try:
                     self._log_thread.start()
-                    print(f"Started background log fetching for {processor_name}...")
+                    logger.info(
+                        f"Started background log fetching for {processor_name}..."
+                    )
                 except Exception as e:
-                    print(
+                    logger.error(
                         f"Failed to start log fetching thread for {processor_name}: {e}"
                     )
                     self._log_thread = None  # Reset if start fails
             else:
-                print(f"Log fetching is already running for {processor_name}.")
+                logger.info(f"Log fetching is already running for {processor_name}.")
 
         return send_response_json
 
@@ -411,9 +421,9 @@ class Processor(Generic[InputType, OutputType]):
             # Setting the reference to None allows a new thread to be created if needed.
             # The OS will eventually clean up the daemon thread when the main process exits,
             # or potentially sooner if the network request completes or errors out.
-            print(
+            logger.info(
                 f"Disassociating from active log stream for {self.name}. A new stream can be started."
             )
             self._log_thread = None
         else:
-            print(f"No active log stream to stop for {self.name}.")
+            logger.info(f"No active log stream to stop for {self.name}.")

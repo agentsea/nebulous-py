@@ -15,6 +15,7 @@ import redis
 import socks
 
 from nebu.errors import RetriableError
+from nebu.logging import logger  # Import the logger
 
 # from redis import ConnectionError, ResponseError # Removed unused imports
 
@@ -57,16 +58,20 @@ def load_user_code(
     loaded_module = None
     exec_namespace: Dict[str, Any] = {}  # Use a local namespace for this load attempt
 
-    print(f"[Worker Code Loader] Attempting to load module: '{module_path}'")
+    logger.info(
+        f"[Worker Code Loader] Attempting to load module: '{module_path}'"
+    )  # Changed from print
     os.environ[_NEBU_INSIDE_CONSUMER_ENV_VAR] = "1"  # Set guard *before* import
-    print(
+    logger.debug(  # Changed from print to debug
         f"[Worker Code Loader] Set environment variable {_NEBU_INSIDE_CONSUMER_ENV_VAR}=1"
     )
 
     try:
         # Execute included object sources FIRST (if any)
         if included_object_sources:
-            print("[Worker Code Loader] Executing @include object sources...")
+            logger.debug(
+                "[Worker Code Loader] Executing @include object sources..."
+            )  # Changed from print to debug
             # Include necessary imports for the exec context
             exec("from pydantic import BaseModel, Field", exec_namespace)
             exec(
@@ -80,49 +85,61 @@ def load_user_code(
             for i, (obj_source, args_sources) in enumerate(included_object_sources):
                 try:
                     exec(obj_source, exec_namespace)
-                    print(
+                    logger.debug(  # Changed from print to debug
                         f"[Worker Code Loader] Successfully executed included object {i} base source"
                     )
                     for j, arg_source in enumerate(args_sources):
                         try:
                             exec(arg_source, exec_namespace)
-                            print(
+                            logger.debug(  # Changed from print to debug
                                 f"[Worker Code Loader] Successfully executed included object {i} arg {j} source"
                             )
                         except Exception as e_arg:
-                            print(
+                            logger.error(  # Changed from print to error
                                 f"Error executing included object {i} arg {j} source: {e_arg}"
                             )
-                            traceback.print_exc()
+                            logger.exception(
+                                f"Included object {i} arg {j} source error:"
+                            )  # Replaced traceback.print_exc()
                 except Exception as e_base:
-                    print(f"Error executing included object {i} base source: {e_base}")
-                    traceback.print_exc()
-            print("[Worker Code Loader] Finished executing included object sources.")
+                    logger.error(
+                        f"Error executing included object {i} base source: {e_base}"
+                    )  # Changed from print to error
+                    logger.exception(
+                        f"Included object {i} base source error:"
+                    )  # Replaced traceback.print_exc()
+            logger.debug(
+                "[Worker Code Loader] Finished executing included object sources."
+            )  # Changed from print to debug
 
         # Import the main module (no reload needed in worker)
         loaded_module = importlib.import_module(module_path)
-        print(f"[Worker Code Loader] Successfully imported module: {module_path}")
+        logger.info(
+            f"[Worker Code Loader] Successfully imported module: {module_path}"
+        )  # Changed from print
 
         # Get the target function from the loaded module
         loaded_target_func = getattr(loaded_module, function_name)
-        print(
+        logger.info(  # Changed from print
             f"[Worker Code Loader] Successfully loaded function '{function_name}' from module '{module_path}'"
         )
 
         # Get the init function if specified
         if init_func_name:
             loaded_init_func = getattr(loaded_module, init_func_name)
-            print(
+            logger.info(  # Changed from print
                 f"[Worker Code Loader] Successfully loaded init function '{init_func_name}' from module '{module_path}'"
             )
             # Execute init_func
-            print(f"[Worker Code Loader] Executing init_func: {init_func_name}...")
+            logger.info(
+                f"[Worker Code Loader] Executing init_func: {init_func_name}..."
+            )  # Changed from print
             loaded_init_func()  # Call the function
-            print(
+            logger.info(  # Changed from print
                 f"[Worker Code Loader] Successfully executed init_func: {init_func_name}"
             )
 
-        print("[Worker Code Loader] Code load successful.")
+        logger.info("[Worker Code Loader] Code load successful.")  # Changed from print
         return (
             loaded_target_func,
             loaded_init_func,
@@ -131,28 +148,34 @@ def load_user_code(
         )
 
     except FileNotFoundError:
-        print(
+        logger.error(  # Changed from print to error
             f"[Worker Code Loader] Error: Entrypoint file not found at '{entrypoint_abs_path}'. Cannot load."
         )
         return None, None, None, {}  # Indicate failure
     except ImportError as e:
-        print(f"[Worker Code Loader] Error importing module '{module_path}': {e}")
-        traceback.print_exc()
+        logger.error(
+            f"[Worker Code Loader] Error importing module '{module_path}': {e}"
+        )  # Changed from print to error
+        logger.exception("Module import error:")  # Replaced traceback.print_exc()
         return None, None, None, {}  # Indicate failure
     except AttributeError as e:
-        print(
+        logger.error(  # Changed from print to error
             f"[Worker Code Loader] Error accessing function '{function_name}' or '{init_func_name}' in module '{module_path}': {e}"
         )
-        traceback.print_exc()
+        logger.exception("Function access error:")  # Replaced traceback.print_exc()
         return None, None, None, {}  # Indicate failure
     except Exception as e:
-        print(f"[Worker Code Loader] Unexpected error during code load: {e}")
-        traceback.print_exc()
+        logger.error(
+            f"[Worker Code Loader] Unexpected error during code load: {e}"
+        )  # Changed from print to error
+        logger.exception(
+            "Unexpected code load error:"
+        )  # Replaced traceback.print_exc()
         return None, None, None, {}  # Indicate failure
     finally:
         # Unset the guard environment variable
         os.environ.pop(_NEBU_INSIDE_CONSUMER_ENV_VAR, None)
-        print(
+        logger.debug(  # Changed from print to debug
             f"[Worker Code Loader] Unset environment variable {_NEBU_INSIDE_CONSUMER_ENV_VAR}"
         )
 
@@ -171,13 +194,13 @@ def _send_error_response(
 
     # Check if Redis connection exists before trying to use it
     if r is None:
-        print(
+        logger.critical(  # Changed from print to critical
             "[Worker] CRITICAL: Cannot send error response, Redis connection is not available."
         )
         return
     # Assert REDIS_STREAM type here for safety, although it should be set if r is available
     if not isinstance(redis_stream, str):
-        print(
+        logger.critical(  # Changed from print to critical
             "[Worker] CRITICAL: Cannot send error response, REDIS_STREAM is not a valid string."
         )
         return
@@ -201,19 +224,21 @@ def _send_error_response(
     try:
         assert isinstance(error_destination, str)
         r.xadd(error_destination, {"data": json.dumps(error_response)})
-        print(
+        logger.info(  # Changed from print
             f"[Worker] Sent error response for message {message_id} to {error_destination}"
         )
     except Exception as e_redis:
-        print(
+        logger.critical(  # Changed from print to critical
             f"[Worker] CRITICAL: Failed to send error response for {message_id} to Redis: {e_redis}"
         )
-        traceback.print_exc()
+        logger.exception(
+            "Error sending response to Redis:"
+        )  # Replaced traceback.print_exc()
 
 
 # --- Main Worker Logic ---
 if __name__ == "__main__":
-    print("[Worker] Starting subprocess worker...")
+    logger.info("[Worker] Starting subprocess worker...")  # Changed from print
     r: Optional[redis.Redis] = None  # Initialize Redis connection variable
     # Initialize potentially unbound variables
     message_id: Optional[str] = None
@@ -224,24 +249,32 @@ if __name__ == "__main__":
 
     try:
         # --- 1. Read Input from Stdin ---
-        print("[Worker] Reading message data from stdin...")
+        logger.info("[Worker] Reading message data from stdin...")  # Changed from print
         input_data_str = sys.stdin.read()
         if not input_data_str:
-            print("[Worker] FATAL: No input data received from stdin.")
+            logger.critical(
+                "[Worker] FATAL: No input data received from stdin."
+            )  # Changed from print to critical
             sys.exit(1)
 
         try:
             input_data = json.loads(input_data_str)
             message_id = input_data["message_id"]
             message_data = input_data["message_data"]
-            print(f"[Worker] Received message_id: {message_id}")
+            logger.info(
+                f"[Worker] Received message_id: {message_id}"
+            )  # Changed from print
         except (json.JSONDecodeError, KeyError) as e:
-            print(f"[Worker] FATAL: Failed to parse input JSON from stdin: {e}")
+            logger.critical(
+                f"[Worker] FATAL: Failed to parse input JSON from stdin: {e}"
+            )  # Changed from print to critical
             # Cannot easily send error response without message_id/Redis info
             sys.exit(1)
 
         # --- 2. Read Configuration from Environment ---
-        print("[Worker] Reading configuration from environment variables...")
+        logger.info(
+            "[Worker] Reading configuration from environment variables..."
+        )  # Changed from print
         try:
             # Core function info
             _function_name = os.environ.get("FUNCTION_NAME")
@@ -307,7 +340,7 @@ if __name__ == "__main__":
                     if os.path.exists(potential_path):
                         entrypoint_abs_path = potential_path
                         found_path = True
-                        print(
+                        logger.info(  # Changed from print
                             f"[Worker] Found entrypoint absolute path via PYTHONPATH: {entrypoint_abs_path}"
                         )
                         break
@@ -331,46 +364,62 @@ if __name__ == "__main__":
                     f"Could not derive a valid module path from entrypoint '{_entrypoint_rel_path}'"
                 )
 
-            print(
+            logger.info(  # Changed from print
                 f"[Worker] Config loaded. Module: '{_module_path}', Function: '{_function_name}'"
             )
 
         except ValueError as e:
-            print(f"[Worker] FATAL: Configuration error: {e}")
+            logger.critical(
+                f"[Worker] FATAL: Configuration error: {e}"
+            )  # Changed from print to critical
             # Cannot send error response without Redis connection
             sys.exit(1)
         except Exception as e:
-            print(f"[Worker] FATAL: Unexpected error reading environment: {e}")
-            traceback.print_exc()
+            logger.critical(
+                f"[Worker] FATAL: Unexpected error reading environment: {e}"
+            )  # Changed from print to critical
+            logger.exception(
+                "Environment reading error:"
+            )  # Replaced traceback.print_exc()
             sys.exit(1)
 
         # --- 3. Set up SOCKS Proxy ---
-        print("[Worker] Configuring SOCKS proxy...")
+        logger.info("[Worker] Configuring SOCKS proxy...")  # Changed from print
         try:
             socks.set_default_proxy(socks.SOCKS5, "localhost", 1055)
             socket.socket = socks.socksocket
-            print(
+            logger.info(  # Changed from print
                 "[Worker] Configured SOCKS5 proxy for socket connections via localhost:1055"
             )
         except Exception as e:
-            print(f"[Worker] FATAL: Failed to configure SOCKS proxy: {e}")
-            traceback.print_exc()
+            logger.critical(
+                f"[Worker] FATAL: Failed to configure SOCKS proxy: {e}"
+            )  # Changed from print to critical
+            logger.exception(
+                "SOCKS proxy configuration error:"
+            )  # Replaced traceback.print_exc()
             sys.exit(1)
 
         # --- 4. Connect to Redis ---
-        print("[Worker] Connecting to Redis...")
+        logger.info("[Worker] Connecting to Redis...")  # Changed from print
         try:
             r = redis.from_url(REDIS_URL, decode_responses=True)
             r.ping()
             redis_info = REDIS_URL.split("@")[-1] if "@" in REDIS_URL else REDIS_URL
-            print(f"[Worker] Connected to Redis via SOCKS proxy at {redis_info}")
+            logger.info(
+                f"[Worker] Connected to Redis via SOCKS proxy at {redis_info}"
+            )  # Changed from print
         except Exception as e:
-            print(f"[Worker] FATAL: Failed to connect to Redis: {e}")
-            traceback.print_exc()
+            logger.critical(
+                f"[Worker] FATAL: Failed to connect to Redis: {e}"
+            )  # Changed from print to critical
+            logger.exception(
+                "Redis connection error:"
+            )  # Replaced traceback.print_exc()
             sys.exit(1)  # Cannot proceed without Redis
 
         # --- 5. Load User Code ---
-        print("[Worker] Loading user code...")
+        logger.info("[Worker] Loading user code...")  # Changed from print
         try:
             (
                 target_function,
@@ -388,11 +437,13 @@ if __name__ == "__main__":
             if target_function is None or imported_module is None:
                 # load_user_code prints errors, just need to exit
                 raise RuntimeError("User code loading failed.")
-            print("[Worker] User code loaded successfully.")
+            logger.info("[Worker] User code loaded successfully.")  # Changed from print
 
         except Exception as e:
-            print(f"[Worker] Error during user code load: {e}")
-            traceback.print_exc()
+            logger.error(
+                f"[Worker] Error during user code load: {e}"
+            )  # Changed from print to error
+            logger.exception("User code load error:")  # Replaced traceback.print_exc()
             # Send error response via Redis before exiting
             # Assert message_id is str before sending error
             assert isinstance(message_id, str)
@@ -410,17 +461,19 @@ if __name__ == "__main__":
                 # message_id should be str here if code load failed after reading it
                 assert isinstance(message_id, str)
                 r.xack(redis_stream, redis_consumer_group, message_id)
-                print(
+                logger.warning(  # Changed from print to warning
                     f"[Worker] Acknowledged message {message_id} after code load failure."
                 )
             except Exception as e_ack:
-                print(
+                logger.critical(  # Changed from print to critical
                     f"[Worker] CRITICAL: Failed to acknowledge message {message_id} after code load failure: {e_ack}"
                 )
             sys.exit(1)  # Exit after attempting to report failure
 
         # --- 6. Execute Processing Logic (Adapted from consumer.py inline path) ---
-        print(f"[Worker] Processing message {message_id}...")
+        logger.info(
+            f"[Worker] Processing message {message_id}..."
+        )  # Changed from print
         return_stream = None
         user_id = None
         try:
@@ -460,7 +513,9 @@ if __name__ == "__main__":
 
             # --- Health Check Logic ---
             if kind == "HealthCheck":
-                print(f"[Worker] Received HealthCheck message {message_id}")
+                logger.info(
+                    f"[Worker] Received HealthCheck message {message_id}"
+                )  # Changed from print
                 health_response = {
                     "kind": "StreamResponseMessage",
                     "id": message_id,  # Respond with original stream message ID
@@ -472,9 +527,13 @@ if __name__ == "__main__":
                 if return_stream:
                     assert isinstance(return_stream, str)
                     r.xadd(return_stream, {"data": json.dumps(health_response)})
-                    print(f"[Worker] Sent health check response to {return_stream}")
+                    logger.info(
+                        f"[Worker] Sent health check response to {return_stream}"
+                    )  # Changed from print
                 # Ack handled outside try/except block
-                print(f"[Worker] HealthCheck for {message_id} processed successfully.")
+                logger.info(
+                    f"[Worker] HealthCheck for {message_id} processed successfully."
+                )  # Changed from print
                 result_content = None  # Indicate healthcheck success path
             else:
                 # --- Normal Message Processing ---
@@ -485,7 +544,7 @@ if __name__ == "__main__":
                         content = content_raw
                 else:
                     content = content_raw
-                print(f"[Worker] Content: {content}")
+                # logger.debug(f"[Worker] Content: {content}") # Changed from print to debug, commented out for less noise
 
                 # --- Construct Input Object ---
                 input_obj: Any = None
@@ -505,16 +564,16 @@ if __name__ == "__main__":
                                     content_model_class = local_namespace.get(
                                         content_type_name
                                     )
-                                if content_model_class is None:
-                                    print(
-                                        f"[Worker] Warning: Content type class '{content_type_name}' not found."
-                                    )
-                                else:
-                                    print(
-                                        f"[Worker] Found content model class: {content_model_class}"
-                                    )
+                                    if content_model_class is None:
+                                        logger.warning(  # Changed from print to warning
+                                            f"[Worker] Warning: Content type class '{content_type_name}' not found."
+                                        )
+                                    else:
+                                        logger.debug(  # Changed from print to debug
+                                            f"[Worker] Found content model class: {content_model_class}"
+                                        )
                             except Exception as e:
-                                print(
+                                logger.warning(  # Changed from print to warning
                                     f"[Worker] Warning: Error resolving content type class '{content_type_name}': {e}"
                                 )
 
@@ -523,9 +582,9 @@ if __name__ == "__main__":
                                 content_model = content_model_class.model_validate(
                                     content
                                 )
-                                print(
-                                    f"[Worker] Validated content model: {content_model}"
-                                )
+                                # logger.debug( # Changed from print to debug, commented out
+                                #     f"[Worker] Validated content model: {content_model}"
+                                # )
                                 input_obj = message_class(
                                     kind=kind,
                                     id=msg_id,
@@ -539,7 +598,7 @@ if __name__ == "__main__":
                                     api_key=api_key,
                                 )
                             except Exception as e:
-                                print(
+                                logger.error(  # Changed from print to error
                                     f"[Worker] Error validating/creating content model '{content_type_name}': {e}. Falling back."
                                 )
                                 input_obj = message_class(
@@ -579,18 +638,20 @@ if __name__ == "__main__":
                                 input_type_class = local_namespace.get(param_type_name)
                             if input_type_class is None:
                                 if param_type_name:
-                                    print(
+                                    logger.warning(  # Changed from print to warning
                                         f"[Worker] Warning: Input type class '{param_type_name}' not found. Passing raw."
                                     )
                                 input_obj = content
                             else:
-                                print(
+                                logger.debug(  # Changed from print to debug
                                     f"[Worker] Found input model class: {input_type_class}"
                                 )
                                 input_obj = input_type_class.model_validate(content)
-                                print(f"[Worker] Validated input model: {input_obj}")
+                                logger.debug(
+                                    f"[Worker] Validated input model: {input_obj}"
+                                )  # Changed from print to debug
                         except Exception as e:
-                            print(
+                            logger.error(  # Changed from print to error
                                 f"[Worker] Error resolving/validating input type '{param_type_name}': {e}. Passing raw."
                             )
                             input_obj = content
@@ -600,13 +661,19 @@ if __name__ == "__main__":
                         f"Required class not found (e.g., Message or param type): {e}"
                     ) from e
                 except Exception as e:
-                    print(f"[Worker] Error constructing input object: {e}")
+                    logger.error(
+                        f"[Worker] Error constructing input object: {e}"
+                    )  # Changed from print to error
                     raise
 
                 # --- Execute the Function ---
-                print(f"[Worker] Executing function '{_function_name}'...")
+                logger.info(
+                    f"[Worker] Executing function '{_function_name}'..."
+                )  # Changed from print
                 result = target_function(input_obj)
-                print(f"[Worker] Result: {result}")
+                logger.debug(
+                    f"[Worker] Result: {result}"
+                )  # Changed from print to debug
 
                 # --- Convert Result ---
                 if hasattr(result, "model_dump"):
@@ -629,7 +696,7 @@ if __name__ == "__main__":
                 if return_stream:
                     assert isinstance(return_stream, str)
                     r.xadd(return_stream, {"data": json.dumps(response)})
-                    print(
+                    logger.info(  # Changed from print
                         f"[Worker] Processed message {message_id}, result sent to {return_stream}"
                     )
 
@@ -640,17 +707,21 @@ if __name__ == "__main__":
                 message_id, str
             )  # message_id is str if processing succeeded
             r.xack(redis_stream, redis_consumer_group, message_id)
-            print(f"[Worker] Acknowledged message {message_id} successfully.")
+            logger.info(
+                f"[Worker] Acknowledged message {message_id} successfully."
+            )  # Changed from print
 
             # --- 9. Exit Successfully ---
-            print("[Worker] Exiting with status 0.")
+            logger.info("[Worker] Exiting with status 0.")  # Changed from print
             sys.exit(0)
 
         except RetriableError as e:
             # --- Handle Retriable Processing Error ---
-            print(f"[Worker] Retriable error processing message {message_id}: {e}")
+            logger.warning(
+                f"[Worker] Retriable error processing message {message_id}: {e}"
+            )  # Changed from print to warning
             tb = traceback.format_exc()
-            print(tb)
+            # logger.exception("Retriable error details:") # Use logger.exception instead of printing tb
             # Assert message_id is str before sending error
             assert isinstance(message_id, str)
             # Send error response (optional, consider suppressing later if too noisy)
@@ -659,14 +730,18 @@ if __name__ == "__main__":
             # DO NOT Acknowledge the message for retriable errors
 
             # --- 9. Exit with specific code for retriable failure ---
-            print("[Worker] Exiting with status 3 due to retriable error.")
+            logger.warning(
+                "[Worker] Exiting with status 3 due to retriable error."
+            )  # Changed from print to warning
             sys.exit(3)
 
         except Exception as e:
             # --- Handle Non-Retriable Processing Error ---
-            print(f"[Worker] Error processing message {message_id}: {e}")
+            logger.error(
+                f"[Worker] Error processing message {message_id}: {e}"
+            )  # Changed from print to error
             tb = traceback.format_exc()
-            print(tb)
+            # logger.exception("Processing error details:") # Use logger.exception instead of printing tb
             # Assert message_id is str before sending error
             assert isinstance(message_id, str)
             _send_error_response(message_id, str(e), tb, return_stream, user_id)
@@ -678,21 +753,27 @@ if __name__ == "__main__":
                 # message_id is str if processing failed after reading it
                 assert isinstance(message_id, str)
                 r.xack(redis_stream, redis_consumer_group, message_id)
-                print(f"[Worker] Acknowledged failed message {message_id}")
+                logger.info(
+                    f"[Worker] Acknowledged failed message {message_id}"
+                )  # Changed from print
             except Exception as e_ack:
-                print(
+                logger.critical(  # Changed from print to critical
                     f"[Worker] CRITICAL: Failed to acknowledge failed message {message_id}: {e_ack}"
                 )
 
             # --- 9. Exit with Failure ---
-            print("[Worker] Exiting with status 1 due to processing error.")
+            logger.error(
+                "[Worker] Exiting with status 1 due to processing error."
+            )  # Changed from print to error
             sys.exit(1)
 
     except Exception as outer_e:
         # --- Handle Catastrophic Worker Error (e.g., setup failure) ---
-        print(f"[Worker] FATAL outer error: {outer_e}")
+        logger.critical(
+            f"[Worker] FATAL outer error: {outer_e}"
+        )  # Changed from print to critical
         tb = traceback.format_exc()
-        print(tb)
+        # logger.exception("Fatal worker error:") # Use logger.exception instead of printing tb
         # If Redis was connected, try to send a generic error for the message_id read from stdin
         # Check that all required variables are not None before proceeding
         if (
@@ -716,17 +797,19 @@ if __name__ == "__main__":
                 )
                 # Attempt to ack if possible, even though the main consumer *might* also try
                 r.xack(redis_stream, redis_consumer_group, message_id)
-                print(
+                logger.warning(  # Changed from print to warning
                     f"[Worker] Attempted to acknowledge message {message_id} after fatal error."
                 )
             except Exception as final_e:
-                print(
+                logger.critical(  # Changed from print to critical
                     f"[Worker] CRITICAL: Failed during final error reporting/ack: {final_e}"
                 )
         else:
-            print(
+            logger.critical(  # Changed from print to critical
                 "[Worker] CRITICAL: Could not report final error or ack message due to missing Redis connection or message details."
             )
 
-        print("[Worker] Exiting with status 1 due to fatal error.")
+        logger.critical(
+            "[Worker] Exiting with status 1 due to fatal error."
+        )  # Changed from print to critical
         sys.exit(1)

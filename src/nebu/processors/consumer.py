@@ -17,6 +17,7 @@ import socks
 from redis import ConnectionError, ResponseError
 
 from nebu.errors import RetriableError
+from nebu.logging import logger
 
 # Define TypeVar for generic models
 T = TypeVar("T")
@@ -38,12 +39,12 @@ NEBU_EXECUTION_MODE = os.environ.get("NEBU_EXECUTION_MODE", "inline").lower()
 execution_mode = NEBU_EXECUTION_MODE
 
 if execution_mode not in ["inline", "subprocess"]:
-    print(
+    logger.warning(
         f"Invalid NEBU_EXECUTION_MODE: {NEBU_EXECUTION_MODE}. Must be 'inline' or 'subprocess'. Defaulting to 'inline'."
     )
     execution_mode = "inline"
 
-print(f"Execution mode: {execution_mode}")
+logger.info(f"Execution mode: {execution_mode}")
 
 
 # --- Function to Load/Reload User Code ---
@@ -69,16 +70,18 @@ def load_or_reload_user_code(
     loaded_module = None
     exec_namespace: Dict[str, Any] = {}  # Use a local namespace for this load attempt
 
-    print(f"[Code Loader] Attempting to load/reload module: '{module_path}'")
+    logger.info(f"[Code Loader] Attempting to load/reload module: '{module_path}'")
     os.environ[_NEBU_INSIDE_CONSUMER_ENV_VAR] = "1"  # Set guard *before* import/reload
-    print(f"[Code Loader] Set environment variable {_NEBU_INSIDE_CONSUMER_ENV_VAR}=1")
+    logger.debug(
+        f"[Code Loader] Set environment variable {_NEBU_INSIDE_CONSUMER_ENV_VAR}=1"
+    )
 
     try:
         current_mtime = os.path.getmtime(entrypoint_abs_path)
 
         # Execute included object sources FIRST (if any)
         if included_object_sources:
-            print("[Code Loader] Executing @include object sources...")
+            logger.debug("[Code Loader] Executing @include object sources...")
             # Include necessary imports for the exec context
             exec("from pydantic import BaseModel, Field", exec_namespace)
             exec(
@@ -92,28 +95,34 @@ def load_or_reload_user_code(
             for i, (obj_source, args_sources) in enumerate(included_object_sources):
                 try:
                     exec(obj_source, exec_namespace)
-                    print(
+                    logger.debug(
                         f"[Code Loader] Successfully executed included object {i} base source"
                     )
                     for j, arg_source in enumerate(args_sources):
                         try:
                             exec(arg_source, exec_namespace)
-                            print(
+                            logger.debug(
                                 f"[Code Loader] Successfully executed included object {i} arg {j} source"
                             )
                         except Exception as e_arg:
-                            print(
+                            logger.error(
                                 f"Error executing included object {i} arg {j} source: {e_arg}"
                             )
-                            traceback.print_exc()  # Log specific error but continue? Or fail reload?
+                            logger.exception(
+                                f"Traceback for included object {i} arg {j} source error:"
+                            )
                 except Exception as e_base:
-                    print(f"Error executing included object {i} base source: {e_base}")
-                    traceback.print_exc()  # Log specific error but continue? Or fail reload?
-            print("[Code Loader] Finished executing included object sources.")
+                    logger.error(
+                        f"Error executing included object {i} base source: {e_base}"
+                    )
+                    logger.exception(
+                        f"Traceback for included object {i} base source error:"
+                    )
+            logger.debug("[Code Loader] Finished executing included object sources.")
 
         # Check if module is already loaded and needs reload
         if module_path in sys.modules:
-            print(
+            logger.info(
                 f"[Code Loader] Module '{module_path}' already imported. Reloading..."
             )
             # Pass the exec_namespace as globals? Usually reload works within its own context.
@@ -121,32 +130,34 @@ def load_or_reload_user_code(
             # reload might not pick that up easily. Might need a fresh import instead.
             # Let's try reload first.
             loaded_module = importlib.reload(sys.modules[module_path])
-            print(f"[Code Loader] Successfully reloaded module: {module_path}")
+            logger.info(f"[Code Loader] Successfully reloaded module: {module_path}")
         else:
             # Import the main module
             loaded_module = importlib.import_module(module_path)
-            print(
+            logger.info(
                 f"[Code Loader] Successfully imported module for the first time: {module_path}"
             )
 
         # Get the target function from the loaded/reloaded module
         loaded_target_func = getattr(loaded_module, function_name)
-        print(
+        logger.info(
             f"[Code Loader] Successfully loaded function '{function_name}' from module '{module_path}'"
         )
 
         # Get the init function if specified
         if init_func_name:
             loaded_init_func = getattr(loaded_module, init_func_name)
-            print(
+            logger.info(
                 f"[Code Loader] Successfully loaded init function '{init_func_name}' from module '{module_path}'"
             )
             # Execute init_func
-            print(f"[Code Loader] Executing init_func: {init_func_name}...")
+            logger.info(f"[Code Loader] Executing init_func: {init_func_name}...")
             loaded_init_func()  # Call the function
-            print(f"[Code Loader] Successfully executed init_func: {init_func_name}")
+            logger.info(
+                f"[Code Loader] Successfully executed init_func: {init_func_name}"
+            )
 
-        print("[Code Loader] Code load/reload successful.")
+        logger.info("[Code Loader] Code load/reload successful.")
         return (
             loaded_target_func,
             loaded_init_func,
@@ -156,37 +167,39 @@ def load_or_reload_user_code(
         )
 
     except FileNotFoundError:
-        print(
+        logger.error(
             f"[Code Loader] Error: Entrypoint file not found at '{entrypoint_abs_path}'. Cannot load/reload."
         )
         return None, None, None, {}, 0.0  # Indicate failure
     except ImportError as e:
-        print(f"[Code Loader] Error importing/reloading module '{module_path}': {e}")
-        traceback.print_exc()
+        logger.error(
+            f"[Code Loader] Error importing/reloading module '{module_path}': {e}"
+        )
+        logger.exception("Import/Reload Error Traceback:")
         return None, None, None, {}, 0.0  # Indicate failure
     except AttributeError as e:
-        print(
+        logger.error(
             f"[Code Loader] Error accessing function '{function_name}' or '{init_func_name}' in module '{module_path}': {e}"
         )
-        traceback.print_exc()
+        logger.exception("Attribute Error Traceback:")
         return None, None, None, {}, 0.0  # Indicate failure
     except Exception as e:
-        print(f"[Code Loader] Unexpected error during code load/reload: {e}")
-        traceback.print_exc()
+        logger.error(f"[Code Loader] Unexpected error during code load/reload: {e}")
+        logger.exception("Unexpected Code Load/Reload Error Traceback:")
         return None, None, None, {}, 0.0  # Indicate failure
     finally:
         # Unset the guard environment variable
         os.environ.pop(_NEBU_INSIDE_CONSUMER_ENV_VAR, None)
-        print(
+        logger.debug(
             f"[Code Loader] Unset environment variable {_NEBU_INSIDE_CONSUMER_ENV_VAR}"
         )
 
 
 # Print all environment variables before starting
-print("===== ENVIRONMENT VARIABLES =====")
+logger.debug("===== ENVIRONMENT VARIABLES =====")
 for key, value in sorted(os.environ.items()):
-    print(f"{key}={value}")
-print("=================================")
+    logger.debug(f"{key}={value}")
+logger.debug("=================================")
 
 # --- Get Environment Variables ---
 try:
@@ -224,7 +237,7 @@ try:
             break
 
     if not _function_name or not _entrypoint_rel_path:
-        print(
+        logger.critical(
             "FATAL: FUNCTION_NAME or NEBU_ENTRYPOINT_MODULE_PATH environment variables not set"
         )
         sys.exit(1)
@@ -242,12 +255,12 @@ try:
             if os.path.exists(potential_path):
                 entrypoint_abs_path = potential_path
                 found_path = True
-                print(
+                logger.info(
                     f"[Consumer] Found entrypoint absolute path via PYTHONPATH: {entrypoint_abs_path}"
                 )
                 break
         if not found_path:
-            print(
+            logger.critical(
                 f"FATAL: Could not find entrypoint file via relative path '{_entrypoint_rel_path}' or in PYTHONPATH."
             )
             # Attempting abspath anyway for the error message in load function
@@ -260,17 +273,17 @@ try:
     if _module_path.endswith(".__init__"):
         _module_path = _module_path[: -len(".__init__")]
     elif _module_path == "__init__":
-        print(
+        logger.critical(
             f"FATAL: Entrypoint '{_entrypoint_rel_path}' resolves to ambiguous top-level __init__. Please use a named file or package."
         )
         sys.exit(1)
     if not _module_path:
-        print(
+        logger.critical(
             f"FATAL: Could not derive a valid module path from entrypoint '{_entrypoint_rel_path}'"
         )
         sys.exit(1)
 
-    print(
+    logger.info(
         f"[Consumer] Initializing. Entrypoint: '{_entrypoint_rel_path}', Module: '{_module_path}', Function: '{_function_name}', Init: '{_init_func_name}'"
     )
 
@@ -290,30 +303,30 @@ try:
     )
 
     if target_function is None or imported_module is None:
-        print("FATAL: Initial load of user code failed. Exiting.")
+        logger.critical("FATAL: Initial load of user code failed. Exiting.")
         sys.exit(1)
-    print(
+    logger.info(
         f"[Consumer] Initial code load successful. Last modified time: {last_load_mtime}"
     )
 
 
 except Exception as e:
-    print(f"FATAL: Error during initial environment setup or code load: {e}")
-    traceback.print_exc()
+    logger.critical(f"FATAL: Error during initial environment setup or code load: {e}")
+    logger.exception("Initial Setup/Load Error Traceback:")
     sys.exit(1)
 
 # Get Redis connection parameters from environment
 REDIS_URL = os.environ.get("REDIS_URL", "")
 
 if not all([REDIS_URL, REDIS_CONSUMER_GROUP, REDIS_STREAM]):
-    print("Missing required Redis environment variables")
+    logger.critical("Missing required Redis environment variables")
     sys.exit(1)
 
 # Configure SOCKS proxy before connecting to Redis
 # Use the proxy settings provided by tailscaled
 socks.set_default_proxy(socks.SOCKS5, "localhost", 1055)
 socket.socket = socks.socksocket
-print("Configured SOCKS5 proxy for socket connections via localhost:1055")
+logger.info("Configured SOCKS5 proxy for socket connections via localhost:1055")
 
 # Connect to Redis
 try:
@@ -324,10 +337,10 @@ try:
     )  # Added decode_responses for convenience
     r.ping()  # Test connection
     redis_info = REDIS_URL.split("@")[-1] if "@" in REDIS_URL else REDIS_URL
-    print(f"Connected to Redis via SOCKS proxy at {redis_info}")
+    logger.info(f"Connected to Redis via SOCKS proxy at {redis_info}")
 except Exception as e:
-    print(f"Failed to connect to Redis via SOCKS proxy: {e}")
-    traceback.print_exc()
+    logger.critical(f"Failed to connect to Redis via SOCKS proxy: {e}")
+    logger.exception("Redis Connection Error Traceback:")
     sys.exit(1)
 
 # Create consumer group if it doesn't exist
@@ -336,13 +349,15 @@ try:
     assert isinstance(REDIS_STREAM, str)
     assert isinstance(REDIS_CONSUMER_GROUP, str)
     r.xgroup_create(REDIS_STREAM, REDIS_CONSUMER_GROUP, id="0", mkstream=True)
-    print(f"Created consumer group {REDIS_CONSUMER_GROUP} for stream {REDIS_STREAM}")
+    logger.info(
+        f"Created consumer group {REDIS_CONSUMER_GROUP} for stream {REDIS_STREAM}"
+    )
 except ResponseError as e:
     if "BUSYGROUP" in str(e):
-        print(f"Consumer group {REDIS_CONSUMER_GROUP} already exists")
+        logger.info(f"Consumer group {REDIS_CONSUMER_GROUP} already exists")
     else:
-        print(f"Error creating consumer group: {e}")
-        traceback.print_exc()
+        logger.error(f"Error creating consumer group: {e}")
+        logger.exception("Consumer Group Creation Error Traceback:")
 
 
 # Function to process messages
@@ -353,16 +368,16 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
 
     # --- Subprocess Execution Path ---
     if execution_mode == "subprocess":
-        print(f"Processing message {message_id} in subprocess...")
+        logger.info(f"Processing message {message_id} in subprocess...")
         process = None  # Initialize process variable
 
         # Helper function to read and print stream lines
         def stream_reader(stream: IO[str], prefix: str):
             try:
                 for line in iter(stream.readline, ""):
-                    print(f"{prefix}: {line.strip()}", flush=True)
+                    logger.debug(f"{prefix}: {line.strip()}")
             except Exception as e:
-                print(f"Error reading stream {prefix}: {e}")
+                logger.error(f"Error reading stream {prefix}: {e}")
             finally:
                 stream.close()
 
@@ -410,12 +425,12 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                     process.stdin.close()  # Signal end of input
                 except (BrokenPipeError, OSError) as e:
                     # Handle cases where the process might have exited early
-                    print(
+                    logger.warning(
                         f"Warning: Failed to write full input to subprocess {message_id}: {e}. It might have exited prematurely."
                     )
                     # Continue to wait and check return code
             else:
-                print(
+                logger.error(
                     f"Error: Subprocess stdin stream not available for {message_id}. Cannot send input."
                 )
                 # Handle this case - perhaps terminate and report error?
@@ -431,19 +446,19 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             stderr_thread.join()
 
             if return_code == 0:
-                print(
+                logger.info(
                     f"Subprocess for {message_id} completed successfully (return code 0)."
                 )
                 # Assume success handling (ack/response) was done by the worker
             elif return_code == 3:
-                print(
+                logger.warning(
                     f"Subprocess for {message_id} reported a retriable error (exit code 3). Message will not be acknowledged."
                 )
                 # Optionally send an error response here, though the worker already did.
                 # _send_error_response(...)
                 # DO NOT Acknowledge the message here, let it be retried.
             else:
-                print(
+                logger.error(
                     f"Subprocess for {message_id} failed with exit code {return_code}."
                 )
                 # Worker likely failed, send generic error and ACK here
@@ -459,14 +474,14 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                     assert isinstance(REDIS_STREAM, str)
                     assert isinstance(REDIS_CONSUMER_GROUP, str)
                     r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
-                    print(f"Acknowledged failed subprocess message {message_id}")
+                    logger.info(f"Acknowledged failed subprocess message {message_id}")
                 except Exception as e_ack:
-                    print(
+                    logger.critical(
                         f"CRITICAL: Failed to acknowledge failed subprocess message {message_id}: {e_ack}"
                     )
 
         except FileNotFoundError:
-            print(
+            logger.critical(
                 "FATAL: Worker script 'nebu.processors.consumer_process_worker' not found. Check PYTHONPATH."
             )
             # Send error and ack if possible
@@ -481,19 +496,19 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 assert isinstance(REDIS_STREAM, str)
                 assert isinstance(REDIS_CONSUMER_GROUP, str)
                 r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
-                print(
+                logger.info(
                     f"Acknowledged message {message_id} after worker script not found failure"
                 )
             except Exception as e_ack:
-                print(
+                logger.critical(
                     f"CRITICAL: Failed to acknowledge message {message_id} after worker script not found failure: {e_ack}"
                 )
 
         except Exception as e:
-            print(
+            logger.error(
                 f"Error launching or managing subprocess for message {message_id}: {e}"
             )
-            traceback.print_exc()
+            logger.exception("Subprocess Launch/Manage Error Traceback:")
             # Also send an error and acknowledge
             _send_error_response(
                 message_id,
@@ -506,22 +521,22 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 assert isinstance(REDIS_STREAM, str)
                 assert isinstance(REDIS_CONSUMER_GROUP, str)
                 r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
-                print(
+                logger.info(
                     f"Acknowledged message {message_id} after subprocess launch/manage failure"
                 )
             except Exception as e_ack:
-                print(
+                logger.critical(
                     f"CRITICAL: Failed to acknowledge message {message_id} after subprocess launch/manage failure: {e_ack}"
                 )
             # Ensure process is terminated if it's still running after an error
             if process and process.poll() is None:
-                print(
+                logger.warning(
                     f"Terminating potentially lingering subprocess for {message_id}..."
                 )
                 process.terminate()
                 process.wait(timeout=5)  # Give it a moment to terminate
                 if process.poll() is None:
-                    print(
+                    logger.warning(
                         f"Subprocess for {message_id} did not terminate gracefully, killing."
                     )
                     process.kill()
@@ -549,7 +564,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
 
     # --- Inline Execution Path (Original Logic) ---
     if target_function is None or imported_module is None:
-        print(
+        logger.error(
             f"Error processing message {message_id}: User code (target_function or module) is not loaded. Skipping."
         )
         _send_error_response(
@@ -564,9 +579,11 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             assert isinstance(REDIS_STREAM, str)
             assert isinstance(REDIS_CONSUMER_GROUP, str)
             r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
-            print(f"Acknowledged message {message_id} due to code load failure.")
+            logger.warning(
+                f"Acknowledged message {message_id} due to code load failure."
+            )
         except Exception as e_ack:
-            print(
+            logger.critical(
                 f"CRITICAL: Failed to acknowledge message {message_id} after code load failure: {e_ack}"
             )
         return  # Skip processing
@@ -590,7 +607,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 f"Expected parsed payload to be a dictionary, but got {type(raw_payload)}"
             )
 
-        print(f">> Raw payload: {raw_payload}")
+        logger.debug(f">> Raw payload: {raw_payload}")
 
         kind = raw_payload.get("kind", "")
         msg_id = raw_payload.get("id", "")
@@ -613,11 +630,11 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         handle = raw_payload.get("handle")
         adapter = raw_payload.get("adapter")
         api_key = raw_payload.get("api_key")
-        print(">> Extracted API key:", api_key)
+        logger.debug(f">> Extracted API key length: {len(api_key) if api_key else 0}")
 
         # --- Health Check Logic (Keep as is) ---
         if kind == "HealthCheck":
-            print(f"Received HealthCheck message {message_id}")
+            logger.info(f"Received HealthCheck message {message_id}")
             health_response = {
                 "kind": "StreamResponseMessage",  # Respond with a standard message kind
                 "id": message_id,
@@ -630,13 +647,13 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 # Assert type again closer to usage for type checker clarity
                 assert isinstance(return_stream, str)
                 r.xadd(return_stream, {"data": json.dumps(health_response)})
-                print(f"Sent health check response to {return_stream}")
+                logger.info(f"Sent health check response to {return_stream}")
 
             # Assert types again closer to usage for type checker clarity
             assert isinstance(REDIS_STREAM, str)
             assert isinstance(REDIS_CONSUMER_GROUP, str)
             r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
-            print(f"Acknowledged HealthCheck message {message_id}")
+            logger.info(f"Acknowledged HealthCheck message {message_id}")
             return  # Exit early for health checks
         # --- End Health Check Logic ---
 
@@ -649,7 +666,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         else:
             content = content_raw
 
-        print(f"Content: {content}")
+        # print(f"Content: {content}")
 
         # --- Construct Input Object using Imported Types ---
         input_obj: Any = None
@@ -677,24 +694,26 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                             # Check in local_namespace from included objects as fallback
                             content_model_class = local_namespace.get(content_type_name)
                         if content_model_class is None:
-                            print(
+                            logger.warning(
                                 f"Warning: Content type class '{content_type_name}' not found in imported module or includes."
                             )
                         else:
-                            print(f"Found content model class: {content_model_class}")
+                            logger.debug(
+                                f"Found content model class: {content_model_class}"
+                            )
                     except AttributeError:
-                        print(
+                        logger.warning(
                             f"Warning: Content type class '{content_type_name}' not found in imported module."
                         )
                     except Exception as e:
-                        print(
+                        logger.warning(
                             f"Warning: Error resolving content type class '{content_type_name}': {e}"
                         )
 
                 if content_model_class:
                     try:
                         content_model = content_model_class.model_validate(content)
-                        print(f"Validated content model: {content_model}")
+                        # print(f"Validated content model: {content_model}")
                         input_obj = message_class(
                             kind=kind,
                             id=msg_id,
@@ -708,7 +727,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                             api_key=api_key,
                         )
                     except Exception as e:
-                        print(
+                        logger.error(
                             f"Error validating/creating content model '{content_type_name}': {e}. Falling back."
                         )
                         # Fallback to raw content in Message
@@ -754,53 +773,54 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                         input_type_class = local_namespace.get(param_type_name)
                     if input_type_class is None:
                         if param_type_name:  # Only warn if a name was expected
-                            print(
+                            logger.warning(
                                 f"Warning: Input type class '{param_type_name}' not found. Passing raw content."
                             )
                         input_obj = content
                     else:
-                        print(f"Found input model class: {input_type_class}")
+                        logger.debug(f"Found input model class: {input_type_class}")
                         input_obj = input_type_class.model_validate(content)
-                        print(f"Validated input model: {input_obj}")
+                        logger.debug(f"Validated input model: {input_obj}")
                 except AttributeError:
-                    print(
+                    logger.warning(
                         f"Warning: Input type class '{param_type_name}' not found in imported module."
                     )
                     input_obj = content
                 except Exception as e:
-                    print(
+                    logger.error(
                         f"Error resolving/validating input type '{param_type_name}': {e}. Passing raw content."
                     )
                     input_obj = content
 
         except NameError as e:
-            print(
+            logger.error(
                 f"Error: Required class (e.g., Message or parameter type) not found. Import failed? {e}"
             )
             # Can't proceed without types, re-raise or handle error response
             raise RuntimeError(f"Required class not found: {e}") from e
         except Exception as e:
-            print(f"Error constructing input object: {e}")
+            logger.error(f"Error constructing input object: {e}")
             raise  # Re-raise unexpected errors during input construction
 
         # print(f"Input object: {input_obj}") # Reduce verbosity
+        # logger.debug(f"Input object: {input_obj}") # Could use logger.debug if needed
 
         # Execute the function
-        print("Executing function...")
+        logger.info("Executing function...")
         result = target_function(input_obj)
-        # print(f"Raw Result: {result}") # Debugging
+        # logger.debug(f"Raw Result: {result}") # Debugging
 
         result_content = None  # Default to None
         if result is not None:  # Only process if there's a result
             try:
                 if hasattr(result, "model_dump"):
-                    print("[Consumer] Result has model_dump, using it.")
+                    logger.debug("[Consumer] Result has model_dump, using it.")
                     # Use 'json' mode to ensure serializability where possible
                     result_content = result.model_dump(mode="json")
-                    # print(f"[Consumer] Result after model_dump: {result_content}") # Debugging
+                    # logger.debug(f"[Consumer] Result after model_dump: {result_content}") # Debugging
                 else:
                     # Try standard json.dumps as a fallback to check serializability
-                    print(
+                    logger.debug(
                         "[Consumer] Result has no model_dump, attempting json.dumps check."
                     )
                     try:
@@ -808,9 +828,9 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                         json.dumps(result)
                         # If the above line doesn't raise TypeError, assign the original result
                         result_content = result
-                        # print(f"[Consumer] Result assigned directly after json.dumps check passed: {result_content}") # Debugging
+                        # logger.debug(f"[Consumer] Result assigned directly after json.dumps check passed: {result_content}") # Debugging
                     except TypeError as e:
-                        print(
+                        logger.warning(
                             f"[Consumer] Warning: Result is not JSON serializable: {e}. Discarding result."
                         )
                         result_content = None  # Explicitly set to None on failure
@@ -818,10 +838,10 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             except (
                 Exception
             ) as e:  # Catch other potential model_dump errors or unexpected issues
-                print(
+                logger.warning(
                     f"[Consumer] Warning: Unexpected error during result processing/serialization: {e}. Discarding result."
                 )
-                traceback.print_exc()
+                logger.exception("Result Processing/Serialization Error Traceback:")
                 result_content = None
 
         # Prepare the response (ensure 'content' key exists even if None)
@@ -840,7 +860,9 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         if return_stream:
             assert isinstance(return_stream, str)
             r.xadd(return_stream, {"data": json.dumps(response)})
-            print(f"Processed message {message_id}, result sent to {return_stream}")
+            logger.info(
+                f"Processed message {message_id}, result sent to {return_stream}"
+            )
 
         # Acknowledge the message
         assert isinstance(REDIS_STREAM, str)
@@ -848,17 +870,17 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
 
     except RetriableError as e:
-        print(f"Retriable error processing message {message_id}: {e}")
-        traceback.print_exc()
+        logger.warning(f"Retriable error processing message {message_id}: {e}")
+        logger.exception("Retriable Error Traceback:")
         _send_error_response(
             message_id, str(e), traceback.format_exc(), return_stream, user_id
         )
         # DO NOT Acknowledge the message for retriable errors
-        print(f"Message {message_id} will be retried later.")
+        logger.info(f"Message {message_id} will be retried later.")
 
     except Exception as e:
-        print(f"Error processing message {message_id}: {e}")
-        traceback.print_exc()
+        logger.error(f"Error processing message {message_id}: {e}")
+        logger.exception("Message Processing Error Traceback:")
         _send_error_response(
             message_id, str(e), traceback.format_exc(), return_stream, user_id
         )
@@ -868,9 +890,9 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             assert isinstance(REDIS_STREAM, str)
             assert isinstance(REDIS_CONSUMER_GROUP, str)
             r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
-            print(f"Acknowledged failed message {message_id}")
+            logger.info(f"Acknowledged failed message {message_id}")
         except Exception as e_ack:
-            print(
+            logger.critical(
                 f"CRITICAL: Failed to acknowledge failed message {message_id}: {e_ack}"
             )
 
@@ -905,16 +927,20 @@ def _send_error_response(
     try:
         assert isinstance(error_destination, str)
         r.xadd(error_destination, {"data": json.dumps(error_response)})
-        print(f"Sent error response for message {message_id} to {error_destination}")
+        logger.info(
+            f"Sent error response for message {message_id} to {error_destination}"
+        )
     except Exception as e_redis:
-        print(
+        logger.critical(
             f"CRITICAL: Failed to send error response for {message_id} to Redis: {e_redis}"
         )
-        traceback.print_exc()
+        logger.exception("Redis Error Response Send Error Traceback:")
 
 
 # Main loop
-print(f"Starting consumer for stream {REDIS_STREAM} in group {REDIS_CONSUMER_GROUP}")
+logger.info(
+    f"Starting consumer for stream {REDIS_STREAM} in group {REDIS_CONSUMER_GROUP}"
+)
 consumer_name = f"consumer-{os.getpid()}-{socket.gethostname()}"  # More unique name
 MIN_IDLE_TIME_MS = 60000  # Minimum idle time in milliseconds (e.g., 60 seconds)
 CLAIM_COUNT = 10  # Max messages to claim at once
@@ -924,25 +950,25 @@ disable_hot_reload = os.environ.get("NEBU_DISABLE_HOT_RELOAD", "0").lower() in [
     "1",
     "true",
 ]
-print(
+logger.info(
     f"[Consumer] Hot code reloading is {'DISABLED' if disable_hot_reload else 'ENABLED'}."
 )
 
 try:
     while True:
-        print(
+        logger.debug(
             f"[{datetime.now(timezone.utc).isoformat()}] --- Top of main loop ---"
         )  # Added log
         # --- Check for Code Updates ---
         if not disable_hot_reload:
-            print(
+            logger.debug(
                 f"[{datetime.now(timezone.utc).isoformat()}] Checking for code updates..."
             )  # Added log
             if entrypoint_abs_path:  # Should always be set after init
                 try:
                     current_mtime = os.path.getmtime(entrypoint_abs_path)
                     if current_mtime > last_load_mtime:
-                        print(
+                        logger.info(
                             f"[Consumer] Detected change in entrypoint file: {entrypoint_abs_path}. Reloading code..."
                         )
                         (
@@ -963,7 +989,7 @@ try:
                             reloaded_target_func is not None
                             and reloaded_module is not None
                         ):
-                            print(
+                            logger.info(
                                 "[Consumer] Code reload successful. Updating functions."
                             )
                             target_function = reloaded_target_func
@@ -974,13 +1000,13 @@ try:
                             )
                             last_load_mtime = new_mtime
                         else:
-                            print(
+                            logger.warning(
                                 "[Consumer] Code reload failed. Continuing with previously loaded code."
                             )
                             # Optionally: Send an alert/log prominently that reload failed
 
                 except FileNotFoundError:
-                    print(
+                    logger.error(
                         f"[Consumer] Error: Entrypoint file '{entrypoint_abs_path}' not found during check. Cannot reload."
                     )
                     # Mark as non-runnable? Or just log?
@@ -988,23 +1014,25 @@ try:
                     imported_module = None
                     last_load_mtime = 0  # Reset mtime to force check next time
                 except Exception as e_reload_check:
-                    print(f"[Consumer] Error checking/reloading code: {e_reload_check}")
-                    traceback.print_exc()
+                    logger.error(
+                        f"[Consumer] Error checking/reloading code: {e_reload_check}"
+                    )
+                    logger.exception("Code Reload Check Error Traceback:")
             else:
-                print(
+                logger.warning(
                     "[Consumer] Warning: Entrypoint absolute path not set, cannot check for code updates."
                 )
-            print(
+            logger.debug(
                 f"[{datetime.now(timezone.utc).isoformat()}] Finished checking for code updates."
             )  # Added log
         else:
             # Log that hot reload is skipped if it's disabled
-            print(
+            logger.debug(
                 f"[{datetime.now(timezone.utc).isoformat()}] Hot reload check skipped (NEBU_DISABLE_HOT_RELOAD=1)."
             )
 
         # --- Claim Old Pending Messages ---
-        print(
+        logger.debug(
             f"[{datetime.now(timezone.utc).isoformat()}] Checking for pending messages to claim..."
         )  # Added log
         try:
@@ -1063,67 +1091,71 @@ try:
                         claimed_messages = [(REDIS_STREAM, claimed_messages_list)]
 
                 if claimed_messages:
-                    print(
-                        f"[{datetime.now(timezone.utc).isoformat()}] Claimed {claimed_messages} pending message(s). Processing..."
-                    )
                     # Process claimed messages immediately
                     # Cast messages to expected type to satisfy type checker
                     typed_messages = cast(
                         List[Tuple[str, List[Tuple[str, Dict[str, str]]]]],
                         claimed_messages,
                     )
+                    # Log after casting and before processing
+                    num_claimed = len(typed_messages[0][1]) if typed_messages else 0
+                    logger.info(
+                        f"[{datetime.now(timezone.utc).isoformat()}] Claimed {num_claimed} pending message(s). Processing..."
+                    )
                     stream_name_str, stream_messages = typed_messages[0]
                     for (
                         message_id_str,
                         message_data_str_dict,
                     ) in stream_messages:
-                        print(f"[Consumer] Processing claimed message {message_id_str}")
+                        logger.info(
+                            f"[Consumer] Processing claimed message {message_id_str}"
+                        )
                         process_message(message_id_str, message_data_str_dict)
                     # After processing claimed messages, loop back to check for more potentially
                     # This avoids immediately blocking on XREADGROUP if there were claimed messages
                     continue
                 else:  # Added log
-                    print(
+                    logger.debug(
                         f"[{datetime.now(timezone.utc).isoformat()}] No pending messages claimed."
                     )  # Added log
 
         except ResponseError as e_claim:
             # Handle specific errors like NOGROUP gracefully if needed
             if "NOGROUP" in str(e_claim):
-                print(
+                logger.critical(
                     f"Consumer group {REDIS_CONSUMER_GROUP} not found during xautoclaim. Exiting."
                 )
                 sys.exit(1)
             else:
-                print(f"[Consumer] Error during XAUTOCLAIM: {e_claim}")
+                logger.error(f"[Consumer] Error during XAUTOCLAIM: {e_claim}")
                 # Decide if this is fatal or recoverable
-                print(
+                logger.error(
                     f"[{datetime.now(timezone.utc).isoformat()}] Error during XAUTOCLAIM: {e_claim}"
                 )  # Added log
                 time.sleep(5)  # Wait before retrying claim
         except ConnectionError as e_claim_conn:
-            print(
+            logger.error(
                 f"Redis connection error during XAUTOCLAIM: {e_claim_conn}. Will attempt reconnect in main loop."
             )
             # Let the main ConnectionError handler below deal with reconnection
-            print(
+            logger.error(
                 f"[{datetime.now(timezone.utc).isoformat()}] Redis connection error during XAUTOCLAIM: {e_claim_conn}. Will attempt reconnect."
             )  # Added log
             time.sleep(5)  # Avoid tight loop on connection errors during claim
         except Exception as e_claim_other:
-            print(
+            logger.error(
                 f"[Consumer] Unexpected error during XAUTOCLAIM/processing claimed messages: {e_claim_other}"
             )
-            print(
+            logger.error(
                 f"[{datetime.now(timezone.utc).isoformat()}] Unexpected error during XAUTOCLAIM/processing claimed: {e_claim_other}"
             )  # Added log
-            traceback.print_exc()
+            logger.exception("XAUTOCLAIM/Processing Error Traceback:")
             time.sleep(5)  # Wait before retrying
 
         # --- Read New Messages from Redis Stream ---
         if target_function is None:
             # If code failed to load initially or during reload, wait before retrying
-            print(
+            logger.warning(
                 "[Consumer] Target function not loaded, waiting 5s before checking again..."
             )
             time.sleep(5)
@@ -1135,7 +1167,7 @@ try:
         streams_arg: Dict[str, str] = {REDIS_STREAM: ">"}
 
         # With decode_responses=True, redis-py expects str types here
-        print(
+        logger.debug(
             f"[{datetime.now(timezone.utc).isoformat()}] Calling xreadgroup (block=5000ms)..."
         )  # Added log
         messages = r.xreadgroup(
@@ -1147,10 +1179,10 @@ try:
         )
 
         if not messages:
-            print(
+            logger.trace(
                 f"[{datetime.now(timezone.utc).isoformat()}] xreadgroup timed out (no new messages)."
             )  # Added log
-            # print("[Consumer] No new messages.") # Reduce verbosity
+            # logger.debug("[Consumer] No new messages.") # Reduce verbosity
             continue
         # Removed the else block here
 
@@ -1166,7 +1198,7 @@ try:
         num_msgs = len(stream_messages)
 
         # Log reception and count before processing
-        print(
+        logger.info(
             f"[{datetime.now(timezone.utc).isoformat()}] xreadgroup returned {num_msgs} message(s). Processing..."
         )  # Moved and combined log
 
@@ -1185,32 +1217,32 @@ try:
             process_message(message_id_str, message_data_str_dict)
 
 except ConnectionError as e:
-    print(f"Redis connection error: {e}. Reconnecting in 5s...")
+    logger.error(f"Redis connection error: {e}. Reconnecting in 5s...")
     time.sleep(5)
     # Attempt to reconnect explicitly
     try:
-        print("Attempting Redis reconnection...")
+        logger.info("Attempting Redis reconnection...")
         # Close existing potentially broken connection? `r.close()` if available
         r = redis.from_url(REDIS_URL, decode_responses=True)
         r.ping()
-        print("Reconnected to Redis.")
+        logger.info("Reconnected to Redis.")
     except Exception as recon_e:
-        print(f"Failed to reconnect to Redis: {recon_e}")
+        logger.error(f"Failed to reconnect to Redis: {recon_e}")
         # Keep waiting
 
 except ResponseError as e:
-    print(f"Redis command error: {e}")
+    logger.error(f"Redis command error: {e}")
     # Should we exit or retry?
     if "NOGROUP" in str(e):
-        print("Consumer group seems to have disappeared. Exiting.")
+        logger.critical("Consumer group seems to have disappeared. Exiting.")
         sys.exit(1)
     time.sleep(1)
 
 except Exception as e:
-    print(f"Unexpected error in main loop: {e}")
-    traceback.print_exc()
+    logger.error(f"Unexpected error in main loop: {e}")
+    logger.exception("Main Loop Error Traceback:")
     time.sleep(1)
 
 finally:
-    print("Consumer loop exited.")
+    logger.info("Consumer loop exited.")
     # Any other cleanup needed?

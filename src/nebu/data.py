@@ -7,6 +7,8 @@ from urllib.parse import urlparse
 import boto3
 from botocore.exceptions import ClientError
 
+from nebu.logging import logger
+
 
 def rclone_copy(
     source_dir: str,
@@ -45,7 +47,7 @@ def rclone_copy(
         command.extend(extra_args)
 
     if verbose:
-        print("Running command:", " ".join(command))
+        logger.info(f"Running command: {' '.join(command)}")
 
     try:
         process = subprocess.Popen(
@@ -57,12 +59,12 @@ def rclone_copy(
 
         for line in process.stdout:
             if verbose:
-                print(line.strip())
+                logger.debug(line.strip())
 
         return process.wait() == 0
 
     except Exception as e:
-        print(f"Error during rclone copy: {e}")
+        logger.error(f"Error during rclone copy: {e}")
         return False
 
 
@@ -83,7 +85,7 @@ def find_latest_checkpoint(training_dir: str) -> Optional[str]:
     latest_checkpoint_dir = None
 
     if not os.path.isdir(training_dir):
-        print(f"Error: Directory not found: {training_dir}")
+        logger.error(f"Error: Directory not found: {training_dir}")
         return None
 
     for item in os.listdir(training_dir):
@@ -134,7 +136,9 @@ class Bucket:
         """
         if aws_access_key_id and aws_secret_access_key:
             if verbose:
-                print("Initializing S3 client with provided temporary credentials.")
+                logger.info(
+                    "Initializing S3 client with provided temporary credentials."
+                )
             self.client = boto3.client(
                 "s3",
                 aws_access_key_id=aws_access_key_id,
@@ -143,7 +147,7 @@ class Bucket:
             )
         else:
             if verbose:
-                print("Initializing S3 client with default credentials.")
+                logger.info("Initializing S3 client with default credentials.")
             self.client = boto3.client("s3")
         self.verbose = verbose
 
@@ -160,7 +164,7 @@ class Bucket:
         paginator = self.client.get_paginator("list_objects_v2")
         list_prefix = prefix or ""
         if self.verbose:
-            print(f"Listing objects in s3://{bucket}/{list_prefix}...")
+            logger.info(f"Listing objects in s3://{bucket}/{list_prefix}...")
 
         operation_parameters = {"Bucket": bucket}
         if list_prefix:
@@ -203,21 +207,21 @@ class Bucket:
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchBucket":
                 if self.verbose:
-                    print(f"Error: Bucket '{bucket}' not found.")
+                    logger.error(f"Error: Bucket '{bucket}' not found.")
             elif e.response["Error"]["Code"] == "NoSuchKey" and prefix:
                 if self.verbose:
-                    print(
+                    logger.warning(
                         f"Prefix s3://{bucket}/{prefix} not found (treating as empty)."
                     )
             else:
-                print(f"Error listing S3 objects: {e}")
+                logger.error(f"Error listing S3 objects: {e}")
             if e.response["Error"]["Code"] == "NoSuchBucket":
                 return {}
         except Exception as e:
-            print(f"An unexpected error occurred listing S3 objects: {e}")
+            logger.error(f"An unexpected error occurred listing S3 objects: {e}")
             return {}
         if self.verbose:
-            print(f"Found {len(objects)} objects in S3.")
+            logger.info(f"Found {len(objects)} objects in S3.")
         return objects
 
     def _list_local(self, local_dir: str) -> Dict[str, Dict[str, Any]]:
@@ -225,13 +229,13 @@ class Bucket:
         files: Dict[str, Dict[str, Any]] = {}
         if not os.path.exists(local_dir):
             if self.verbose:
-                print(
+                logger.warning(
                     f"Warning: Local path not found: {local_dir} (treating as empty)."
                 )
             return files
         if os.path.isfile(local_dir):
             if self.verbose:
-                print(
+                logger.warning(
                     f"Warning: Source {local_dir} is a file, not a directory. Syncing single file."
                 )
             try:
@@ -245,10 +249,10 @@ class Bucket:
                     "type": "local",
                 }
             except OSError as e:
-                print(f"Error accessing source file {local_dir}: {e}")
+                logger.error(f"Error accessing source file {local_dir}: {e}")
             return files
         if self.verbose:
-            print(f"Scanning local directory: {local_dir}...")
+            logger.info(f"Scanning local directory: {local_dir}...")
         for root, _, file_list in os.walk(local_dir):
             for file_name in file_list:
                 local_path = os.path.join(root, file_name)
@@ -265,11 +269,15 @@ class Bucket:
                         "type": "local",
                     }
                 except OSError as e:
-                    print(f"Warning: Could not get metadata for {local_path}: {e}")
+                    logger.warning(
+                        f"Warning: Could not get metadata for {local_path}: {e}"
+                    )
                 except Exception as e:
-                    print(f"Warning: Unexpected error processing {local_path}: {e}")
+                    logger.warning(
+                        f"Warning: Unexpected error processing {local_path}: {e}"
+                    )
         if self.verbose:
-            print(f"Found {len(files)} files locally.")
+            logger.info(f"Found {len(files)} files locally.")
         return files
 
     def sync(
@@ -302,8 +310,8 @@ class Bucket:
             source_items = self._list_local(source)
             dest_items = self._list_objects(dest_bucket, dest_prefix)
             if not source_items and not os.path.exists(source):
-                print(
-                    f"Error: Source path {source} not found and is not empty."
+                logger.warning(
+                    f"Warning: Source path {source} not found, but proceeding as it might be an empty source sync."
                 )  # Check needed? list_local handles it.
                 # return # Let it proceed if source is just empty
             if os.path.isfile(source):
@@ -314,7 +322,7 @@ class Bucket:
             sync_direction = "download"
             source_items = self._list_objects(src_bucket, src_prefix)
             if os.path.exists(destination) and not os.path.isdir(destination):
-                print(
+                logger.error(
                     f"Error: Local destination '{destination}' exists but is not a directory."
                 )
                 return
@@ -322,20 +330,20 @@ class Bucket:
             if not dry_run:
                 os.makedirs(destination, exist_ok=True)
             elif not os.path.isdir(destination) and self.verbose:
-                print(f"Dry run: Would create local directory {destination}")
+                logger.info(f"Dry run: Would create local directory {destination}")
 
         elif src_bucket is None and dest_bucket is None:
-            print(
+            logger.error(
                 "Error: Both source and destination are local paths. Use standard file copy tools."
             )
             return
         elif src_bucket is not None and dest_bucket is not None:
-            print(
+            logger.error(
                 "Error: S3 to S3 sync not implemented. Use AWS CLI or S3 Batch Operations."
             )
             return
         else:
-            print("Error: Invalid source or destination path combination.")
+            logger.error("Error: Invalid source or destination path combination.")
             return
 
         actions_to_perform: List[Dict[str, Any]] = []
@@ -414,7 +422,7 @@ class Bucket:
         s3_deletions_batch: List[Dict[str, str]] = []
         if not actions_to_perform:
             if self.verbose:
-                print("Source and destination are already synchronized.")
+                logger.info("Source and destination are already synchronized.")
             # Optional: Add check if source exists if sync_direction == "upload" and not os.path.exists(source):
             return
 
@@ -425,12 +433,14 @@ class Bucket:
                 local_path = action["source_path"]
                 dest_full_path_or_key = action["dest_full_path_or_key"]
                 if not isinstance(dest_full_path_or_key, str):
-                    print(f"ERROR: Invalid dest path: {dest_full_path_or_key}")
+                    logger.error(f"ERROR: Invalid dest path: {dest_full_path_or_key}")
                     continue
                 _, upload_key = self._parse_path(dest_full_path_or_key)
                 target_bucket = action["dest_bucket"]
                 if self.verbose:
-                    print(f"Upload: {local_path} to {dest_full_path_or_key} ({reason})")
+                    logger.info(
+                        f"Upload: {local_path} to {dest_full_path_or_key} ({reason})"
+                    )
                 if not dry_run:
                     if target_bucket and upload_key is not None:
                         try:
@@ -439,11 +449,11 @@ class Bucket:
                             )
                             uploads_done += 1
                         except ClientError as e:
-                            print(f"ERROR uploading {local_path}: {e}")
+                            logger.error(f"ERROR uploading {local_path}: {e}")
                         except Exception as e:
-                            print(f"ERROR uploading {local_path}: {e}")
+                            logger.error(f"ERROR uploading {local_path}: {e}")
                     else:
-                        print(
+                        logger.error(
                             f"ERROR: Invalid S3 target: bucket={target_bucket}, key={upload_key}"
                         )
             elif action["action"] == "download":
@@ -451,11 +461,11 @@ class Bucket:
                 local_path = action["dest_full_path_or_key"]
                 source_bucket_dl = action["source_bucket"]
                 if self.verbose:
-                    print(
+                    logger.info(
                         f"Download: {action['source_path']} to {local_path} ({reason})"
                     )
                 if not isinstance(local_path, str):
-                    print(f"ERROR: Invalid local dest path: {local_path}")
+                    logger.error(f"ERROR: Invalid local dest path: {local_path}")
                     continue
                 if not dry_run:
                     if source_bucket_dl and s3_key_full and local_path:
@@ -467,13 +477,13 @@ class Bucket:
                             )
                             downloads_done += 1
                         except ClientError as e:
-                            print(f"ERROR downloading {s3_key_full}: {e}")
+                            logger.error(f"ERROR downloading {s3_key_full}: {e}")
                         except OSError as e:
-                            print(f"ERROR creating/writing {local_path}: {e}")
+                            logger.error(f"ERROR creating/writing {local_path}: {e}")
                         except Exception as e:
-                            print(f"ERROR downloading {s3_key_full}: {e}")
+                            logger.error(f"ERROR downloading {s3_key_full}: {e}")
                     else:
-                        print(
+                        logger.error(
                             f"ERROR: Invalid download params: bucket={source_bucket_dl}, key={s3_key_full}, local={local_path}"
                         )
             elif action["action"] == "delete_s3":
@@ -481,25 +491,29 @@ class Bucket:
                 target_bucket_del = action["dest_bucket"]
                 if target_bucket_del and s3_key_to_delete:
                     if self.verbose:
-                        print(f"Delete S3: {action['path_to_delete']} ({reason})")
+                        logger.info(f"Delete S3: {action['path_to_delete']} ({reason})")
                     if isinstance(s3_key_to_delete, str):
                         s3_deletions_batch.append({"Key": s3_key_to_delete})
                     else:
-                        print(f"ERROR: Invalid S3 key for deletion: {s3_key_to_delete}")
+                        logger.error(
+                            f"ERROR: Invalid S3 key for deletion: {s3_key_to_delete}"
+                        )
                 else:
-                    print(
+                    logger.error(
                         f"ERROR: Invalid S3 target for deletion: bucket={target_bucket_del}, key={s3_key_to_delete}"
                     )
             elif action["action"] == "delete_local":
                 local_path_to_delete = action["path_to_delete"]
                 if self.verbose:
-                    print(f"Delete Local: {local_path_to_delete} ({reason})")
+                    logger.info(f"Delete Local: {local_path_to_delete} ({reason})")
                 if not dry_run:
                     try:
                         os.remove(local_path_to_delete)
                         deletions_done += 1
                     except OSError as e:
-                        print(f"ERROR deleting local file {local_path_to_delete}: {e}")
+                        logger.error(
+                            f"ERROR deleting local file {local_path_to_delete}: {e}"
+                        )
 
         if s3_deletions_batch:
             target_bucket_del_batch = next(
@@ -523,20 +537,20 @@ class Bucket:
                         if "Errors" in response and response["Errors"]:
                             deleted_count_batch -= len(response["Errors"])
                             for error in response["Errors"]:
-                                print(
+                                logger.error(
                                     f"ERROR deleting S3 object {error['Key']}: {error['Code']} - {error['Message']}"
                                 )
                     except ClientError as e:
-                        print(f"ERROR deleting S3 objects batch: {e}")
+                        logger.error(f"ERROR deleting S3 objects batch: {e}")
                         deleted_count_batch = 0
                     except Exception as e:
-                        print(f"ERROR deleting S3 objects batch: {e}")
+                        logger.error(f"ERROR deleting S3 objects batch: {e}")
                         deleted_count_batch = 0
                 deletions_done += deleted_count_batch
             elif target_bucket_del_batch:
                 deletions_done = len(s3_deletions_batch)
             else:
-                print(
+                logger.warning(
                     "Warning: Could not determine target bucket for S3 deletion batch."
                 )
 
@@ -552,24 +566,28 @@ class Bucket:
                 delete_local_count = sum(
                     1 for a in actions_to_perform if a["action"] == "delete_local"
                 )
-                print("\n--- DRY RUN SUMMARY ---")
+                logger.info("\n--- DRY RUN SUMMARY ---")
                 if sync_direction == "upload":
-                    print(f"Would upload: {upload_count} file(s)")
+                    logger.info(f"Would upload: {upload_count} file(s)")
                     if delete:
-                        print(f"Would delete from S3: {delete_s3_count} object(s)")
+                        logger.info(
+                            f"Would delete from S3: {delete_s3_count} object(s)"
+                        )
                 elif sync_direction == "download":
-                    print(f"Would download: {download_count} file(s)")
+                    logger.info(f"Would download: {download_count} file(s)")
                     if delete:
-                        print(f"Would delete locally: {delete_local_count} file(s)")
-                print("--- END DRY RUN ---")
+                        logger.info(
+                            f"Would delete locally: {delete_local_count} file(s)"
+                        )
+                logger.info("--- END DRY RUN ---")
         else:
             if self.verbose:
                 if sync_direction == "upload":
-                    print(
+                    logger.info(
                         f"Sync completed. Uploaded: {uploads_done} file(s). Deleted from S3: {deletions_done if delete else 0} object(s)."
                     )
                 elif sync_direction == "download":
-                    print(
+                    logger.info(
                         f"Sync completed. Downloaded: {downloads_done} file(s). Deleted locally: {deletions_done if delete else 0} file(s)."
                     )
 
@@ -596,12 +614,12 @@ class Bucket:
         dest_bucket, dest_prefix = self._parse_path(destination)
 
         if src_bucket is None and dest_bucket is None:
-            print(
+            logger.error(
                 "Error: Both source and destination are local. Use 'shutil.copy' or 'shutil.copytree'."
             )
             return
         if src_bucket is not None and dest_bucket is not None:
-            print(
+            logger.error(
                 "Error: S3 to S3 copy not implemented. Use 'aws s3 cp' or boto3 'copy_object'."
             )
             return
@@ -609,7 +627,7 @@ class Bucket:
         # Upload: Local to S3
         if src_bucket is None and dest_bucket is not None:
             if not os.path.exists(source):
-                print(f"Error: Local source path not found: {source}")
+                logger.error(f"Error: Local source path not found: {source}")
                 return
             current_dest_prefix = dest_prefix or ""
 
@@ -621,19 +639,19 @@ class Bucket:
                 else:
                     s3_key = current_dest_prefix
                 if self.verbose:
-                    print(f"Uploading {source} to s3://{dest_bucket}/{s3_key}")
+                    logger.info(f"Uploading {source} to s3://{dest_bucket}/{s3_key}")
                 try:
                     self.client.upload_file(source, dest_bucket, s3_key)
                     if self.verbose:
-                        print("Upload complete.")
+                        logger.info("Upload complete.")
                 except ClientError as e:
-                    print(f"ERROR uploading {source}: {e}")
+                    logger.error(f"ERROR uploading {source}: {e}")
                 except Exception as e:
-                    print(f"ERROR uploading {source}: {e}")
+                    logger.error(f"ERROR uploading {source}: {e}")
 
             elif os.path.isdir(source):
                 if self.verbose:
-                    print(
+                    logger.info(
                         f"Uploading directory {source}/* to s3://{dest_bucket}/{current_dest_prefix}/"
                     )
                 files_uploaded = files_failed = 0
@@ -645,24 +663,26 @@ class Bucket:
                             current_dest_prefix, relative_path
                         ).replace("\\", "/")
                         if self.verbose:
-                            print(
+                            logger.debug(
                                 f"  Uploading {local_path} to s3://{dest_bucket}/{s3_key}"
                             )
                         try:
                             self.client.upload_file(local_path, dest_bucket, s3_key)
                             files_uploaded += 1
                         except ClientError as e:
-                            print(f"  ERROR uploading {local_path}: {e}")
+                            logger.error(f"  ERROR uploading {local_path}: {e}")
                             files_failed += 1
                         except Exception as e:
-                            print(f"  ERROR uploading {local_path}: {e}")
+                            logger.error(f"  ERROR uploading {local_path}: {e}")
                             files_failed += 1
                 if self.verbose:
-                    print(
+                    logger.info(
                         f"Directory upload complete. Files uploaded: {files_uploaded}, Failed: {files_failed}"
                     )
             else:
-                print(f"Error: Source {source} is neither a file nor a directory.")
+                logger.error(
+                    f"Error: Source {source} is neither a file nor a directory."
+                )
 
         # Download: S3 to Local
         elif src_bucket is not None and dest_bucket is None:
@@ -686,15 +706,15 @@ class Bucket:
                     if e.response["Error"]["Code"] == "404":
                         is_prefix_download = True  # Assume prefix if object not found
                     elif e.response["Error"]["Code"] == "NoSuchBucket":
-                        print(f"Error: Source bucket '{src_bucket}' not found.")
+                        logger.error(f"Error: Source bucket '{src_bucket}' not found.")
                         return
                     else:
-                        print(
+                        logger.error(
                             f"Error checking S3 source s3://{src_bucket}/{current_src_prefix}: {e}"
                         )
                         return
                 except Exception as e:
-                    print(
+                    logger.error(
                         f"Error checking S3 source s3://{src_bucket}/{current_src_prefix}: {e}"
                     )
                     return
@@ -711,7 +731,7 @@ class Bucket:
                     if parent_dir:
                         os.makedirs(parent_dir, exist_ok=True)
                 if self.verbose:
-                    print(
+                    logger.info(
                         f"Downloading s3://{src_bucket}/{single_object_key} to {local_dest_path}"
                     )
                 try:
@@ -719,23 +739,23 @@ class Bucket:
                         src_bucket, single_object_key, local_dest_path
                     )
                     if self.verbose:
-                        print("Download complete.")
+                        logger.info("Download complete.")
                 except ClientError as e:
-                    print(f"ERROR downloading {single_object_key}: {e}")
+                    logger.error(f"ERROR downloading {single_object_key}: {e}")
                 except OSError as e:
-                    print(f"ERROR creating/writing {local_dest_path}: {e}")
+                    logger.error(f"ERROR creating/writing {local_dest_path}: {e}")
                 except Exception as e:
-                    print(f"ERROR downloading {single_object_key}: {e}")
+                    logger.error(f"ERROR downloading {single_object_key}: {e}")
 
             elif is_prefix_download:
                 if os.path.exists(destination) and not os.path.isdir(destination):
-                    print(
+                    logger.error(
                         f"Error: Local destination '{destination}' exists but is not a directory."
                     )
                     return
                 os.makedirs(destination, exist_ok=True)
                 if self.verbose:
-                    print(
+                    logger.info(
                         f"Downloading prefix s3://{src_bucket}/{current_src_prefix}/* to {destination}/"
                     )
                 paginator = self.client.get_paginator("list_objects_v2")
@@ -780,7 +800,7 @@ class Bucket:
                                 )
                                 local_dest_dir = os.path.dirname(local_dest_path)
                                 if self.verbose:
-                                    print(
+                                    logger.debug(
                                         f"  Downloading s3://{src_bucket}/{s3_key} to {local_dest_path}"
                                     )
                                 try:
@@ -791,37 +811,37 @@ class Bucket:
                                     )
                                     files_downloaded += 1
                                 except ClientError as e:
-                                    print(f"  ERROR downloading {s3_key}: {e}")
+                                    logger.error(f"  ERROR downloading {s3_key}: {e}")
                                     files_failed += 1
                                 except OSError as e:
-                                    print(
+                                    logger.error(
                                         f"  ERROR creating/writing {local_dest_path}: {e}"
                                     )
                                     files_failed += 1
                                 except Exception as e:
-                                    print(f"  ERROR downloading {s3_key}: {e}")
+                                    logger.error(f"  ERROR downloading {s3_key}: {e}")
                                     files_failed += 1
                     if not found_objects and self.verbose:
-                        print(
+                        logger.warning(
                             f"Warning: No objects found at source prefix s3://{src_bucket}/{current_src_prefix}"
                         )
                     if self.verbose:
-                        print(
+                        logger.info(
                             f"Prefix download complete. Files downloaded: {files_downloaded}, Failed: {files_failed}"
                         )
                 except ClientError as e:
                     if e.response["Error"]["Code"] == "NoSuchBucket":
-                        print(f"Error: Source bucket '{src_bucket}' not found.")
+                        logger.error(f"Error: Source bucket '{src_bucket}' not found.")
                     else:
-                        print(
+                        logger.error(
                             f"Error listing objects in s3://{src_bucket}/{current_src_prefix}: {e}"
                         )
                 except Exception as e:
-                    print(
+                    logger.error(
                         f"Error listing objects in s3://{src_bucket}/{current_src_prefix}: {e}"
                     )
         else:
-            print("Error: Unknown copy operation type.")
+            logger.error("Error: Unknown copy operation type.")
 
     def check(self, s3_uri: str) -> bool:
         """
@@ -839,7 +859,7 @@ class Bucket:
 
         if bucket_name is None or s3_key is None:
             # _parse_path returns None, None if scheme is not 's3'
-            print(f"Error: Invalid S3 URI format: {s3_uri}")
+            logger.error(f"Error: Invalid S3 URI format: {s3_uri}")
             return False
 
         is_prefix = s3_key.endswith("/")
@@ -865,13 +885,13 @@ class Bucket:
                 return False
             elif e.response["Error"]["Code"] == "NoSuchBucket":
                 if self.verbose:
-                    print(
+                    logger.error(
                         f"Error: Bucket '{bucket_name}' not found (from URI: {s3_uri})."
                     )
                 return False
             # Handle other potential errors like AccessDenied differently if needed
-            print(f"Error checking {s3_uri}: {e}")
+            logger.error(f"Error checking {s3_uri}: {e}")
             return False
         except Exception as e:
-            print(f"An unexpected error occurred checking {s3_uri}: {e}")
+            logger.error(f"An unexpected error occurred checking {s3_uri}: {e}")
             return False

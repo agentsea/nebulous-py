@@ -1,12 +1,13 @@
 [project]
 name = "nebu"
-version = "0.1.91"
+version = "0.1.93"
 description = "A globally distributed container runtime"
 readme = "README.md"
 requires-python = ">=3.10.14"
 dependencies = [
     "boto3>=1.37.30",
     "dill>=0.3.8",
+    "loguru>=0.7.3",
     "openai>=1.68.2",
     "pillow>=10.4.0",
     "pydantic>=2.10.6",

@@ -18,6 +18,7 @@ from nebu.containers.models import (
     V1SSHKey,
     V1VolumePath,
 )
+from nebu.logging import logger  # Import the logger
 from nebu.meta import V1ResourceReference
 
 
@@ -53,8 +54,8 @@ class Container:
         self.nebu_host = current_server.server
         self.config = config
 
-        # print(f"nebu_host: {self.nebu_host}")
-        # print(f"api_key: {self.api_key}")
+        logger.debug(f"nebu_host: {self.nebu_host}")
+        logger.debug(f"api_key: {self.api_key}")
 
         # Construct the containers base URL
         self.containers_url = f"{self.nebu_host}/v1/containers"
@@ -72,7 +73,7 @@ class Container:
         )
 
         containers = V1Containers.model_validate(response.json())
-        print(f"containers: {containers}")
+        logger.debug(f"containers: {containers}")
         existing = next(
             (
                 c
@@ -82,7 +83,7 @@ class Container:
             None,
         )
 
-        print(f"existing: {existing}")
+        logger.debug(f"existing: {existing}")
 
         if not existing:
             # If there's no existing container, create one:
@@ -115,7 +116,7 @@ class Container:
             )
             create_response.raise_for_status()
             self.container = V1Container.model_validate(create_response.json())
-            print(f"Created container {self.container.metadata.name}")
+            logger.info(f"Created container {self.container.metadata.name}")
         else:
             # If container is found, check if anything has changed
             # Gather the updated fields from the function arguments
@@ -155,11 +156,13 @@ class Container:
 
             if not fields_changed:
                 # Nothing changed—do nothing
-                print(f"No changes detected for container {existing.metadata.name}.")
+                logger.info(
+                    f"No changes detected for container {existing.metadata.name}."
+                )
                 self.container = existing
                 return
 
-            print(
+            logger.info(
                 f"Detected changes for container {existing.metadata.name}, deleting and recreating."
             )
 
@@ -176,7 +179,7 @@ class Container:
                 headers={"Authorization": f"Bearer {self.api_key}"},
             )
             delete_response.raise_for_status()
-            print(f"Deleted container {existing.metadata.name}")
+            logger.info(f"Deleted container {existing.metadata.name}")
 
             # Now recreate the container using the updated parameters
             create_request = V1ContainerRequest(
@@ -205,7 +208,7 @@ class Container:
             )
             create_response.raise_for_status()
             self.container = V1Container.model_validate(create_response.json())
-            print(f"Recreated container {self.container.metadata.name}")
+            logger.info(f"Recreated container {self.container.metadata.name}")
 
         # Save constructor params to `self` for reference, like you do in ReplayBuffer.
         self.kind = "Container"
@@ -243,7 +246,7 @@ class Container:
             headers={"Authorization": f"Bearer {self.api_key}"},
         )
         response.raise_for_status()
-        print(f"Deleted container {self.name} in namespace {self.namespace}")
+        logger.info(f"Deleted container {self.name} in namespace {self.namespace}")
 
     @classmethod
     def get(
