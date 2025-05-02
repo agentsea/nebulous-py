@@ -214,11 +214,14 @@ class Processor(Generic[InputType, OutputType]):
         wait: bool = False,
         logs: bool = False,
         api_key: Optional[str] = None,
+        user_key: Optional[str] = None,
     ) -> OutputType | Dict[str, Any] | None:
         """
         Allows the Processor instance to be called like a function, sending data.
         """
-        return self.send(data=data, wait=wait, logs=logs, api_key=api_key)
+        return self.send(
+            data=data, wait=wait, logs=logs, api_key=api_key, user_key=user_key
+        )
 
     def send(
         self,
@@ -226,6 +229,7 @@ class Processor(Generic[InputType, OutputType]):
         wait: bool = False,
         logs: bool = False,
         api_key: Optional[str] = None,
+        user_key: Optional[str] = None,
     ) -> OutputType | Dict[str, Any] | None:
         """
         Send data to the processor and optionally stream logs in the background.
@@ -250,6 +254,7 @@ class Processor(Generic[InputType, OutputType]):
         stream_data = V1StreamData(
             content=data,
             wait=wait,
+            user_key=user_key,
         )
         response = requests.post(
             messages_url,
