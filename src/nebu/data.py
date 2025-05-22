@@ -1,13 +1,34 @@
+import fnmatch
 import os
 import subprocess
+from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import boto3
 from botocore.exceptions import ClientError
 
 from nebu.logging import logger
+
+
+# For RcloneBucket with direct subprocess calls
+def is_rclone_installed() -> bool:
+    """Check if rclone is installed and available in the PATH."""
+    try:
+        result = subprocess.run(
+            ["rclone", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+import logging  # For logging.DEBUG etc.
 
 
 def rclone_copy(
@@ -115,7 +136,46 @@ def _parse_s3_path(path: str) -> Tuple[Optional[str], Optional[str]]:
     return bucket, prefix
 
 
-class Bucket:
+class StorageBucket(ABC):
+    """Abstract base class for bucket operations."""
+
+    def __init__(self, verbose: bool = True):
+        self.verbose = verbose
+
+    @abstractmethod
+    def sync(
+        self,
+        source: str,
+        destination: str,
+        delete: bool = False,
+        dry_run: bool = False,
+        excludes: Optional[List[str]] = None,
+    ) -> None:
+        """
+        Synchronizes files between a source and a destination.
+        """
+        pass
+
+    @abstractmethod
+    def copy(
+        self,
+        source: str,
+        destination: str,
+    ) -> None:
+        """
+        Copies files or directories between a source and a destination.
+        """
+        pass
+
+    @abstractmethod
+    def check(self, path_uri: str) -> bool:
+        """
+        Checks if an object or prefix exists.
+        """
+        pass
+
+
+class S3Bucket(StorageBucket):
     """Handles interactions with AWS S3."""
 
     def __init__(
@@ -124,6 +184,7 @@ class Bucket:
         aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
         aws_session_token: Optional[str] = None,
+        region: str = "us-east-1",
     ):
         """
         Initializes the S3 handler. Can use default credentials or provided temporary ones.
@@ -133,23 +194,25 @@ class Bucket:
             aws_access_key_id (Optional[str]): Temporary AWS Access Key ID.
             aws_secret_access_key (Optional[str]): Temporary AWS Secret Access Key.
             aws_session_token (Optional[str]): Temporary AWS Session Token (required if keys are temporary).
+            region (str): AWS region for S3 operations. Defaults to "us-east-1".
         """
+        super().__init__(verbose=verbose)
         if aws_access_key_id and aws_secret_access_key:
-            if verbose:
+            if self.verbose:
                 logger.info(
                     "Initializing S3 client with provided temporary credentials."
                 )
             self.client = boto3.client(
                 "s3",
+                region_name=region,
                 aws_access_key_id=aws_access_key_id,
                 aws_secret_access_key=aws_secret_access_key,
                 aws_session_token=aws_session_token,  # Pass session token if provided
             )
         else:
-            if verbose:
+            if self.verbose:
                 logger.info("Initializing S3 client with default credentials.")
-            self.client = boto3.client("s3")
-        self.verbose = verbose
+            self.client = boto3.client("s3", region_name=region)
 
     def _parse_path(self, path: str) -> Tuple[Optional[str], Optional[str]]:
         """Class method: Parses an S3 path (s3://bucket/prefix) into bucket and prefix."""
@@ -224,7 +287,9 @@ class Bucket:
             logger.info(f"Found {len(objects)} objects in S3.")
         return objects
 
-    def _list_local(self, local_dir: str) -> Dict[str, Dict[str, Any]]:
+    def _list_local(
+        self, local_dir: str, excludes: Optional[List[str]] = None
+    ) -> Dict[str, Dict[str, Any]]:
         """Class method: Lists files in a local directory."""
         files: Dict[str, Dict[str, Any]] = {}
         if not os.path.exists(local_dir):
@@ -253,8 +318,41 @@ class Bucket:
             return files
         if self.verbose:
             logger.info(f"Scanning local directory: {local_dir}...")
-        for root, _, file_list in os.walk(local_dir):
+        for root, dirs, file_list in os.walk(local_dir):
+            # Exclude __pycache__ directories
+            if "__pycache__" in dirs:
+                dirs.remove("__pycache__")
+
+            # Apply custom excludes for directories
+            if excludes:
+                dirs[:] = [
+                    d
+                    for d in dirs
+                    if not any(fnmatch.fnmatch(d, pattern) for pattern in excludes)
+                ]
+
             for file_name in file_list:
+                # Exclude .pyc files
+                if file_name.endswith(".pyc"):
+                    continue
+
+                # Apply custom excludes for files
+                if excludes and any(
+                    fnmatch.fnmatch(file_name, pattern) for pattern in excludes
+                ):
+                    continue
+
+                # Also check full relative path for excludes
+                # This allows patterns like 'subdir/*' or '*.log' to work across the tree
+                potential_relative_path = os.path.relpath(
+                    os.path.join(root, file_name), local_dir
+                ).replace("\\", "/")
+                if excludes and any(
+                    fnmatch.fnmatch(potential_relative_path, pattern)
+                    for pattern in excludes
+                ):
+                    continue
+
                 local_path = os.path.join(root, file_name)
                 try:
                     relative_path = os.path.relpath(local_path, local_dir).replace(
@@ -286,6 +384,7 @@ class Bucket:
         destination: str,
         delete: bool = False,
         dry_run: bool = False,
+        excludes: Optional[List[str]] = None,
     ) -> None:
         """
         Synchronizes files between a source and a destination (local or S3).
@@ -296,6 +395,7 @@ class Bucket:
             destination (str): The destination path (local directory or s3://...).
             delete (bool): If True, delete extraneous files from the destination.
             dry_run (bool): If True, print actions without performing them.
+            excludes (Optional[List[str]]): List of patterns to exclude from sync.
         """
         mtime_tolerance = timedelta(seconds=2)
         src_bucket, src_prefix = self._parse_path(source)
@@ -307,7 +407,7 @@ class Bucket:
 
         if src_bucket is None and dest_bucket is not None:
             sync_direction = "upload"
-            source_items = self._list_local(source)
+            source_items = self._list_local(source, excludes=excludes)
             dest_items = self._list_objects(dest_bucket, dest_prefix)
             if not source_items and not os.path.exists(source):
                 logger.warning(
@@ -326,7 +426,7 @@ class Bucket:
                     f"Error: Local destination '{destination}' exists but is not a directory."
                 )
                 return
-            dest_items = self._list_local(destination)
+            dest_items = self._list_local(destination, excludes=excludes)
             if not dry_run:
                 os.makedirs(destination, exist_ok=True)
             elif not os.path.isdir(destination) and self.verbose:
@@ -843,23 +943,23 @@ class Bucket:
         else:
             logger.error("Error: Unknown copy operation type.")
 
-    def check(self, s3_uri: str) -> bool:
+    def check(self, path_uri: str) -> bool:
         """
         Check if an object or prefix exists in an S3 bucket using an S3 URI.
 
         Args:
-            s3_uri (str): The S3 URI (e.g., 's3://my-bucket/my-key' or 's3://my-bucket/my-prefix/').
+            path_uri (str): The S3 URI (e.g., 's3://my-bucket/my-key' or 's3://my-bucket/my-prefix/').
                           Use a trailing '/' to check for a prefix/directory.
 
         Returns:
             bool: True if the object or prefix exists, False otherwise.
         """
         # Use the class client and parse method
-        bucket_name, s3_key = self._parse_path(s3_uri)
+        bucket_name, s3_key = self._parse_path(path_uri)
 
         if bucket_name is None or s3_key is None:
             # _parse_path returns None, None if scheme is not 's3'
-            logger.error(f"Error: Invalid S3 URI format: {s3_uri}")
+            logger.error(f"Error: Invalid S3 URI format: {path_uri}")
             return False
 
         is_prefix = s3_key.endswith("/")
@@ -886,12 +986,508 @@ class Bucket:
             elif e.response["Error"]["Code"] == "NoSuchBucket":
                 if self.verbose:
                     logger.error(
-                        f"Error: Bucket '{bucket_name}' not found (from URI: {s3_uri})."
+                        f"Error: Bucket '{bucket_name}' not found (from URI: {path_uri})."
                     )
                 return False
             # Handle other potential errors like AccessDenied differently if needed
-            logger.error(f"Error checking {s3_uri}: {e}")
+            logger.error(f"Error checking {path_uri}: {e}")
             return False
         except Exception as e:
-            logger.error(f"An unexpected error occurred checking {s3_uri}: {e}")
+            logger.error(f"An unexpected error occurred checking {path_uri}: {e}")
             return False
+
+
+# Standalone helper for RcloneBucket._is_rclone_path
+def _is_rclone_path_standalone(path: str) -> bool:
+    """
+    Standalone helper: Determines if a path string is an rclone path (e.g., "remote:path",
+    ":backend:path", or "s3://bucket/path").
+    """
+    parsed_url = urlparse(path)
+
+    # Explicitly allow s3:// paths as rclone paths
+    if parsed_url.scheme == "s3" and parsed_url.netloc:
+        return True
+
+    # Check for Windows drive letter paths (e.g., C:\path or C:) - these are local.
+    if os.name == "nt":
+        if len(path) >= 2 and path[0].isalpha() and path[1] == ":":
+            if len(path) == 2:  # e.g., "C:"
+                return False  # Local current directory on drive
+            if path[2] in ["\\", "/"]:  # e.g., "C:\foo" or "C:/foo"
+                return False  # Local absolute path
+
+    # Handle file:// scheme as local
+    if parsed_url.scheme == "file":
+        return False
+
+    # If it has another scheme (e.g., http, ftp) and a network location,
+    # it's a URL, not typically an rclone path for copy/sync operations in this context.
+    if parsed_url.scheme and parsed_url.scheme != "s3" and parsed_url.netloc:
+        return False
+
+    # If the path contains a colon, it's likely an rclone remote path
+    # (e.g., "myremote:path" or ":s3:path" or "s3:path" if scheme not picked up by urlparse for s3:).
+    # This check comes after specific local/URL patterns are ruled out.
+    if ":" in path:
+        return True
+
+    # Default to local if none of the above (e.g., "/abs/path", "rel/path")
+    return False
+
+
+class RcloneBucket(StorageBucket):
+    """Handles interactions with storage using the rclone-python library."""
+
+    def __init__(
+        self,
+        verbose: bool = True,
+        aws_access_key_id: Optional[str] = None,
+        aws_secret_access_key: Optional[str] = None,
+        aws_session_token: Optional[str] = None,
+        region: str = "us-east-1",
+    ):
+        """
+        Initializes the RcloneBucket handler.
+
+        Args:
+            verbose (bool): If True, prints status messages and sets rclone-python log level.
+            aws_access_key_id (Optional[str]): AWS Access Key ID for rclone S3 remotes.
+            aws_secret_access_key (Optional[str]): AWS Secret Access Key for rclone S3 remotes.
+            aws_session_token (Optional[str]): AWS Session Token for rclone S3 remotes.
+            region (str): AWS region for S3 operations. Defaults to "us-east-1".
+        """
+        super().__init__(verbose=verbose)
+        self.aws_access_key_id = aws_access_key_id
+        self.aws_secret_access_key = aws_secret_access_key
+        self.aws_session_token = aws_session_token
+        self.region = region
+
+        if not is_rclone_installed():
+            logger.error(
+                "rclone command not found. Please ensure rclone is installed and configured correctly (https://rclone.org/install/)."
+            )
+            # Consider raising an exception if rclone CLI is essential for rclone-python to function.
+            return
+
+        if self.verbose:
+            logger.info("Initialized RcloneBucket with rclone-python.")
+            logger.info("rclone-python log level set to DEBUG.")
+        else:
+            logger.info("rclone-python log level set to WARNING.")
+
+        # Store a mtime tolerance, similar to S3 Bucket
+        self.mtime_tolerance = timedelta(seconds=2)
+
+    def _is_rclone_path(self, path: str) -> bool:
+        """
+        Determines if a path string is an rclone path (e.g., "remote:path").
+        """
+        return _is_rclone_path_standalone(path)
+
+    def _execute_with_aws_env(
+        self, func: Callable[..., Any], *args: Any, **kwargs: Any
+    ) -> Any:
+        """Helper to execute rclone functions with temporary AWS env vars if provided."""
+        old_env: Dict[str, Optional[str]] = {}
+        aws_vars = {
+            "AWS_ACCESS_KEY_ID": self.aws_access_key_id,
+            "AWS_SECRET_ACCESS_KEY": self.aws_secret_access_key,
+            "AWS_SESSION_TOKEN": self.aws_session_token,
+            # Add rclone-specific S3 configuration
+            "RCLONE_CONFIG_S3_TYPE": "s3",
+            "RCLONE_CONFIG_S3_PROVIDER": "AWS",
+            "RCLONE_CONFIG_S3_ENV_AUTH": "true",
+            "RCLONE_CONFIG_S3_REGION": self.region,
+        }
+
+        try:
+            for key, value in aws_vars.items():
+                if value is not None:
+                    old_env[key] = os.environ.get(key)
+                    os.environ[key] = value
+                elif key in os.environ:  # Value is None but was set in env
+                    old_env[key] = os.environ.get(key)
+                    del os.environ[key]
+
+            # Ensure stderr is captured by setting show_progress to False
+            if "show_progress" not in kwargs:
+                kwargs["show_progress"] = False
+
+            # Set DEBUG log level for rclone to get more verbose output
+            old_log_level = logging.getLogger("rclone").level
+            logging.getLogger("rclone").setLevel(logging.DEBUG)
+
+            # Convert s3:// URLs if needed
+            modified_args = list(args)
+            for i, arg in enumerate(modified_args):
+                if isinstance(arg, str) and arg.startswith("s3://"):
+                    # Convert s3://bucket/path to s3:bucket/path
+                    arg_parts = arg[5:].split("/", 1)
+                    bucket_name = arg_parts[0]
+                    path = arg_parts[1] if len(arg_parts) > 1 else ""
+                    modified_args[i] = f"s3:{bucket_name}/{path}"
+
+            try:
+                return func(*modified_args, **kwargs)
+            finally:
+                # Restore the original log level
+                logging.getLogger("rclone").setLevel(old_log_level)
+        finally:
+            for key, value in old_env.items():
+                if value is None:
+                    if key in os.environ:  # It was set by us, now remove
+                        del os.environ[key]
+                else:
+                    os.environ[key] = value
+
+            # Clean up any env vars we set but weren't in old_env
+            for key in aws_vars.keys():
+                if key not in old_env and key in os.environ:
+                    del os.environ[key]
+
+    def sync(
+        self,
+        source: str,
+        destination: str,
+        delete: bool = False,
+        dry_run: bool = False,
+        excludes: Optional[List[str]] = None,
+    ) -> None:
+        if not is_rclone_installed():
+            logger.error("Cannot sync: rclone command not found.")
+            return
+
+        if self.verbose:
+            logger.info(f"Rclone sync: {source} -> {destination}")
+            if delete:
+                logger.info("Deletion enabled.")
+            if dry_run:
+                logger.info("Dry run mode.")
+            if excludes:
+                logger.info(f"Excludes: {excludes}")
+
+        rc_args = [
+            "--modify-window=2s",
+            "--log-level=DEBUG" if self.verbose else "--log-level=INFO",
+            "--log-format=date,time,level,message",
+            "--progress",  # Add progress display
+        ]
+        if dry_run:
+            rc_args.append("--dry-run")
+        if delete:
+            rc_args.append("--delete-after")
+
+        if excludes:
+            for ex_pattern in excludes:
+                rc_args.append(f"--exclude={ex_pattern}")
+
+        # Set environment variables for AWS credentials if they exist
+        env = os.environ.copy()
+        if self.aws_access_key_id:
+            env["AWS_ACCESS_KEY_ID"] = self.aws_access_key_id
+        if self.aws_secret_access_key:
+            env["AWS_SECRET_ACCESS_KEY"] = self.aws_secret_access_key
+        if self.aws_session_token:
+            env["AWS_SESSION_TOKEN"] = self.aws_session_token
+
+        # Set rclone-specific environment variables
+        env["RCLONE_CONFIG_S3_TYPE"] = "s3"
+        env["RCLONE_CONFIG_S3_PROVIDER"] = "AWS"
+        env["RCLONE_CONFIG_S3_ENV_AUTH"] = "true"
+        env["RCLONE_CONFIG_S3_REGION"] = self.region
+
+        # Convert s3:// URLs if needed
+        rclone_src = source
+        rclone_dest = destination
+
+        # If source or destination uses s3:// URL format, convert it for rclone CLI
+        if source.startswith("s3://"):
+            # Convert s3://bucket/path to s3:bucket/path
+            source_parts = source[5:].split("/", 1)
+            bucket_name = source_parts[0]
+            path = source_parts[1] if len(source_parts) > 1 else ""
+            rclone_src = f"s3:{bucket_name}/{path}"
+
+        if destination.startswith("s3://"):
+            # Convert s3://bucket/path to s3:bucket/path
+            destination_parts = destination[5:].split("/", 1)
+            bucket_name = destination_parts[0]
+            path = destination_parts[1] if len(destination_parts) > 1 else ""
+            rclone_dest = f"s3:{bucket_name}/{path}"
+
+        # Build the rclone command
+        cmd = ["rclone", "sync", rclone_src, rclone_dest] + rc_args
+
+        if self.verbose:
+            logger.info(f"Running command: {' '.join(cmd)}")
+
+        try:
+            # Run the command and capture output
+            process = subprocess.run(
+                cmd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            # Always log the stdout and stderr for verbose mode
+            if self.verbose:
+                if process.stdout:
+                    logger.info(f"Rclone stdout:\n{process.stdout}")
+                if process.stderr:
+                    logger.info(f"Rclone stderr:\n{process.stderr}")
+
+            if process.returncode == 0:
+                logger.info(
+                    f"Rclone sync completed successfully from {source} to {destination}."
+                )
+                if dry_run:
+                    logger.info(
+                        "Dry run summary (see rclone output above for details)."
+                    )
+            else:
+                logger.error(f"Rclone sync failed with exit code: {process.returncode}")
+
+                if (
+                    not self.verbose
+                ):  # Only log these again if not already logged in verbose mode
+                    if process.stdout:
+                        logger.error(f"Rclone stdout:\n{process.stdout}")
+                    if process.stderr:
+                        logger.error(f"Rclone stderr:\n{process.stderr}")
+        except Exception as e:
+            logger.error(f"Error running rclone sync command: {e}")
+
+    def copy(
+        self,
+        source: str,
+        destination: str,
+    ) -> None:
+        if not is_rclone_installed():
+            logger.error("Cannot copy: rclone command not found.")
+            return
+
+        # Determine if source/destination are rclone paths or local
+        is_src_rclone = self._is_rclone_path(source)
+        is_dest_rclone = self._is_rclone_path(destination)
+
+        if not is_src_rclone and not is_dest_rclone:
+            logger.error(
+                "Error: Both source and destination are local. Use 'shutil.copy' or 'shutil.copytree'."
+            )
+            return
+
+        if self.verbose:
+            logger.info(f"Rclone copy: {source} -> {destination}")
+
+        rc_args = [
+            "--log-level=DEBUG" if self.verbose else "--log-level=INFO",
+            "--log-format=date,time,level,message",
+            "--progress",  # Add progress display
+        ]
+
+        # Set environment variables for AWS credentials if they exist
+        env = os.environ.copy()
+        if self.aws_access_key_id:
+            env["AWS_ACCESS_KEY_ID"] = self.aws_access_key_id
+        if self.aws_secret_access_key:
+            env["AWS_SECRET_ACCESS_KEY"] = self.aws_secret_access_key
+        if self.aws_session_token:
+            env["AWS_SESSION_TOKEN"] = self.aws_session_token
+
+        # Set rclone-specific environment variables
+        env["RCLONE_CONFIG_S3_TYPE"] = "s3"
+        env["RCLONE_CONFIG_S3_PROVIDER"] = "AWS"
+        env["RCLONE_CONFIG_S3_ENV_AUTH"] = "true"
+        env["RCLONE_CONFIG_S3_REGION"] = self.region
+
+        # Convert s3:// URLs if needed
+        rclone_src = source
+        rclone_dest = destination
+
+        # If source or destination uses s3:// URL format, convert it for rclone CLI
+        if source.startswith("s3://"):
+            # Convert s3://bucket/path to s3:bucket/path
+            source_parts = source[5:].split("/", 1)
+            bucket_name = source_parts[0]
+            path = source_parts[1] if len(source_parts) > 1 else ""
+            rclone_src = f"s3:{bucket_name}/{path}"
+
+        if destination.startswith("s3://"):
+            # Convert s3://bucket/path to s3:bucket/path
+            destination_parts = destination[5:].split("/", 1)
+            bucket_name = destination_parts[0]
+            path = destination_parts[1] if len(destination_parts) > 1 else ""
+            rclone_dest = f"s3:{bucket_name}/{path}"
+
+        # Build the rclone command
+        cmd = ["rclone", "copy", rclone_src, rclone_dest] + rc_args
+
+        if self.verbose:
+            logger.info(f"Running command: {' '.join(cmd)}")
+
+        try:
+            # Run the command and capture output
+            process = subprocess.run(
+                cmd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            # Always log the stdout and stderr for verbose mode
+            if self.verbose:
+                if process.stdout:
+                    logger.info(f"Rclone stdout:\n{process.stdout}")
+                if process.stderr:
+                    logger.info(f"Rclone stderr:\n{process.stderr}")
+
+            if process.returncode == 0:
+                logger.info(
+                    f"Rclone copy completed successfully from {source} to {destination}."
+                )
+            else:
+                logger.error(f"Rclone copy failed with exit code: {process.returncode}")
+
+                if (
+                    not self.verbose
+                ):  # Only log these again if not already logged in verbose mode
+                    if process.stdout:
+                        logger.error(f"Rclone stdout:\n{process.stdout}")
+                    if process.stderr:
+                        logger.error(f"Rclone stderr:\n{process.stderr}")
+        except Exception as e:
+            logger.error(f"Error running rclone copy command: {e}")
+
+    def check(self, path_uri: str) -> bool:
+        if not is_rclone_installed():
+            logger.error("Cannot check path: rclone command not found.")
+            return False
+
+        if self.verbose:
+            logger.info(f"Checking existence of path: {path_uri}")
+
+        # Convert s3:// URL if needed
+        rclone_path = path_uri
+        if path_uri.startswith("s3://"):
+            # Convert s3://bucket/path to s3:bucket/path
+            path_parts = path_uri[5:].split("/", 1)
+            bucket_name = path_parts[0]
+            path = path_parts[1] if len(path_parts) > 1 else ""
+            rclone_path = f"s3:{bucket_name}/{path}"
+
+        # Set environment variables for AWS credentials if they exist
+        env = os.environ.copy()
+        if self.aws_access_key_id:
+            env["AWS_ACCESS_KEY_ID"] = self.aws_access_key_id
+        if self.aws_secret_access_key:
+            env["AWS_SECRET_ACCESS_KEY"] = self.aws_secret_access_key
+        if self.aws_session_token:
+            env["AWS_SESSION_TOKEN"] = self.aws_session_token
+
+        # Set rclone-specific environment variables
+        env["RCLONE_CONFIG_S3_TYPE"] = "s3"
+        env["RCLONE_CONFIG_S3_PROVIDER"] = "AWS"
+        env["RCLONE_CONFIG_S3_ENV_AUTH"] = "true"
+        env["RCLONE_CONFIG_S3_REGION"] = self.region
+
+        # Build the rclone command (size is a good way to check existence)
+        cmd = ["rclone", "size", rclone_path, "--json"]
+
+        try:
+            # Run the command and capture output
+            process = subprocess.run(
+                cmd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            if process.returncode == 0:
+                if self.verbose:
+                    logger.debug(f"Path {path_uri} exists and is accessible.")
+                return True
+            else:
+                # Check if this is a "not found" error vs. another type of error
+                err_lower = process.stderr.lower() if process.stderr else ""
+                not_found_indicators = [
+                    "directory not found",
+                    "object not found",
+                    "path not found",
+                    "no such file or directory",
+                    "source or destination not found",
+                    "error: couldn't find file",
+                    "failed to size: can't find object",
+                    "can't find source directory",
+                    "source not found",
+                ]
+                is_not_found = any(
+                    indicator in err_lower for indicator in not_found_indicators
+                )
+
+                if is_not_found:
+                    if self.verbose:
+                        logger.debug(f"Path {path_uri} not found.")
+                    return False
+                else:
+                    # Other type of error (permissions, network, etc.)
+                    logger.warning(f"Error checking path {path_uri}: {process.stderr}")
+                    return False
+        except Exception as e:
+            logger.error(f"Error running rclone check command: {e}")
+            return False
+
+
+# Factory function Bucket()
+def Bucket(
+    verbose: bool = True,
+    aws_access_key_id: Optional[str] = None,
+    aws_secret_access_key: Optional[str] = None,
+    aws_session_token: Optional[str] = None,
+    region: str = "us-east-1",
+) -> StorageBucket:
+    """
+    Factory function to create a bucket instance.
+    Returns RcloneBucket if rclone is available and installed, otherwise S3Bucket.
+
+    Args:
+        verbose (bool): If True, prints status messages. Defaults to True.
+        aws_access_key_id (Optional[str]): Temporary AWS Access Key ID (for S3Bucket).
+        aws_secret_access_key (Optional[str]): Temporary AWS Secret Access Key (for S3Bucket).
+        aws_session_token (Optional[str]): Temporary AWS Session Token (for S3Bucket).
+        region (str): AWS region for S3 operations. Defaults to "us-east-1".
+
+    Returns:
+        StorageBucket: An instance of RcloneBucket or S3Bucket.
+    """
+    if is_rclone_installed():
+        print("rclone is installed and available")
+        if verbose:
+            logger.info("rclone is installed and available. Using RcloneBucket.")
+        return RcloneBucket(
+            verbose=verbose,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
+            region=region,
+        )
+    else:
+        print("rclone not installed or not available")
+        if verbose:
+            logger.info(
+                "rclone not installed or not available. Falling back to S3Bucket."
+            )
+        return S3Bucket(
+            verbose=verbose,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
+            region=region,
+        )

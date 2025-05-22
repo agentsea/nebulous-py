@@ -1649,7 +1649,7 @@ wheels = [
 
 [[package]]
 name = "nebu"
-version = "0.1.92"
+version = "0.1.97"
 source = { virtual = "." }
 dependencies = [
     { name = "boto3" },
@@ -1660,6 +1660,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pysocks" },
     { name = "pyyaml" },
+    { name = "rclone-python" },
     { name = "redis" },
     { name = "requests" },
 ]
@@ -1689,6 +1690,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "pysocks", specifier = ">=1.7.1" },
     { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "rclone-python", specifier = ">=0.1.21" },
     { name = "redis", specifier = ">=5.0" },
     { name = "requests", specifier = ">=2.32.3" },
 ]
@@ -2693,6 +2695,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/24/20/54ac98869530d65b111bfd189c301564a3f1af17e5fc40de421ca6f01664/qwen_vl_utils-0.0.10.tar.gz", hash = "sha256:e5bb985508a85dfc339989870a35fbd0362f96bbb01e7e0472ff89942d33ceb8", size = 6975 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9e/f2/b489f9077bd410f44400d056ad7b0246ee3c516bf9d65b362ea35a57ce1c/qwen_vl_utils-0.0.10-py3-none-any.whl", hash = "sha256:a31d170f1e8c511f79b6bbf5cd77d7e8f7c9b1d68db102be140843fa57b46a0a", size = 6654 },
+]
+
+[[package]]
+name = "rclone-python"
+version = "0.1.21"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "rich" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e3/06/ad0ebd8d7a767934a797daa6950bc91f072603a73bb529556d18d17e3c54/rclone_python-0.1.21.tar.gz", hash = "sha256:c19c9496da38254879b505e58ef832a556b691bd08a897ee27f4e885dac25970", size = 21071 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/c2/a8830c22dd3f86a9b1a39fc3e4bc63fa62e98401ffaa25bb762669336292/rclone_python-0.1.21-py3-none-any.whl", hash = "sha256:22860edcd0484bd375b34b4a821f9e9837588f8e277cc1b67326dd950b1a7144", size = 14925 },
 ]
 
 [[package]]
