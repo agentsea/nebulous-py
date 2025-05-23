@@ -395,6 +395,7 @@ def processor(
     config: Optional[GlobalConfig] = None,
     hot_reload: bool = True,
     debug: bool = False,
+    name: Optional[str] = None,
 ):
     def decorator(
         func: Callable[[Any], Any],
@@ -411,7 +412,7 @@ def processor(
             f"Decorator Init: @processor decorating function '{func.__name__}'"
         )
         all_env = env or []
-        processor_name = func.__name__
+        processor_name = name or func.__name__
         all_volumes = volumes or []  # Initialize volumes list
 
         # Use a local variable for config resolution
