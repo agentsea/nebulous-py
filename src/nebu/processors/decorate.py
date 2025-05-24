@@ -413,6 +413,7 @@ def processor(
         )
         all_env = env or []
         processor_name = name or func.__name__
+        actual_function_name = func.__name__
         all_volumes = volumes or []  # Initialize volumes list
 
         # Use a local variable for config resolution
@@ -968,7 +969,7 @@ def processor(
             logger.debug(f"Decorator: Falling back to func.__module__: {module_path}")
 
         # Basic info needed by consumer to find and run the function
-        all_env.append(V1EnvVar(key="FUNCTION_NAME", value=processor_name))
+        all_env.append(V1EnvVar(key="FUNCTION_NAME", value=actual_function_name))
         if rel_func_path:
             # For now, just pass the relative file path, consumer will handle conversion
             all_env.append(
@@ -1053,6 +1054,10 @@ def processor(
         # Add Execution Mode
         all_env.append(V1EnvVar(key="NEBU_EXECUTION_MODE", value=execution_mode))
         logger.debug(f"Decorator: Set NEBU_EXECUTION_MODE to: {execution_mode}")
+
+        # Add processor_name as a separate environment variable if needed for logging/identification in consumer
+        all_env.append(V1EnvVar(key="PROCESSOR_RESOURCE_NAME", value=processor_name))
+        logger.debug(f"Decorator: Set PROCESSOR_RESOURCE_NAME to: {processor_name}")
 
         # Add Hot Reload Configuration
         if not hot_reload:
