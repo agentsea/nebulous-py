@@ -2,7 +2,7 @@ import json
 import threading
 import time
 import uuid
-from typing import Any, Dict, Generic, List, Optional, TypeVar, cast
+from typing import Any, Dict, Generic, List, Optional, TypeVar
 
 import requests
 from pydantic import BaseModel
@@ -472,7 +472,7 @@ class Processor(Generic[InputType, OutputType]):
 
                 # Send health check and wait for response
                 response = self.send(
-                    data=cast(InputType, health_check_data),
+                    data=health_check_data,  # type: ignore
                     wait=True,
                     timeout=30.0,  # Short timeout for individual health check
                 )
