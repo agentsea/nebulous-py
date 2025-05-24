@@ -213,7 +213,7 @@ class Processor(Generic[InputType, OutputType]):
 
         # --- Wait for health check if requested ---
         if wait_for_healthy:
-            self._wait_for_health_check()
+            self.wait_for_health_check()
 
     def __call__(
         self,
@@ -442,8 +442,8 @@ class Processor(Generic[InputType, OutputType]):
         else:
             logger.info(f"No active log stream to stop for {self.name}.")
 
-    def _wait_for_health_check(
-        self, timeout: float = 300.0, retry_interval: float = 5.0
+    def wait_for_health_check(
+        self, timeout: float = 3600.0, retry_interval: float = 5.0
     ) -> None:
         """
         Wait for the processor to respond to health checks.
