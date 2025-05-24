@@ -609,47 +609,66 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
 
         logger.debug(f">> Raw payload: {raw_payload}")
 
-        kind = raw_payload.get("kind", "")
-        msg_id = raw_payload.get("id", "")
-        content_raw = raw_payload.get("content", {})
-        created_at_str = raw_payload.get("created_at")  # Get as string or None
-        # Attempt to parse created_at, fallback to now()
+        # --- Extract fields from the *inner* message content for HealthCheck and regular processing ---
+        # The actual message content is inside raw_payload[\"content\"]
+        inner_content_data = raw_payload.get("content", {})
+        if not isinstance(inner_content_data, dict):
+            # If content is not a dict (e.g. already a primitive from a non-Message processor)
+            # we can't reliably get 'kind' or other fields from it.
+            # This case is more relevant for non-StreamMessage processors.
+            # For HealthChecks, we expect a structured 'content'.
+            logger.warning(
+                f"Received non-dict inner_content_data: {inner_content_data}. HealthCheck might be missed if applicable."
+            )
+            inner_kind = ""  # Default to empty string
+            inner_msg_id = ""  # Default to empty string
+            actual_content_to_process = inner_content_data  # Use it as is
+            inner_created_at_str = None
+        else:
+            inner_kind = inner_content_data.get("kind", "")
+            inner_msg_id = inner_content_data.get("id", "")
+            # The 'content' field of the inner_content_data is what the user function expects
+            actual_content_to_process = inner_content_data.get("content", {})
+            inner_created_at_str = inner_content_data.get("created_at")
+
+        # Attempt to parse inner_created_at, fallback to now()
         try:
-            created_at = (
-                datetime.fromisoformat(created_at_str)
-                if created_at_str
-                and isinstance(created_at_str, str)  # Check type explicitly
+            inner_created_at = (
+                datetime.fromisoformat(inner_created_at_str)
+                if inner_created_at_str and isinstance(inner_created_at_str, str)
                 else datetime.now(timezone.utc)
             )
         except ValueError:
-            created_at = datetime.now(timezone.utc)
+            inner_created_at = datetime.now(timezone.utc)
 
+        # These are from the outer envelope, might be useful for routing/meta
         return_stream = raw_payload.get("return_stream")
         user_id = raw_payload.get("user_id")
-        orgs = raw_payload.get("organizations")
-        handle = raw_payload.get("handle")
-        adapter = raw_payload.get("adapter")
-        api_key = raw_payload.get("api_key")
+        orgs = raw_payload.get("organizations")  # from outer
+        handle = raw_payload.get("handle")  # from outer
+        adapter = raw_payload.get("adapter")  # from outer
+        api_key = raw_payload.get("api_key")  # from outer
         logger.debug(f">> Extracted API key length: {len(api_key) if api_key else 0}")
 
-        # --- Health Check Logic (Keep as is) ---
-        if kind == "HealthCheck":
-            logger.info(f"Received HealthCheck message {message_id}")
+        # --- Health Check Logic ---
+        # Use inner_kind for health check
+        if inner_kind == "HealthCheck":
+            logger.info(
+                f"Received HealthCheck message {message_id} (inner_id: {inner_msg_id})"
+            )
             health_response = {
-                "kind": "StreamResponseMessage",  # Respond with a standard message kind
-                "id": message_id,
-                "content": {"status": "healthy", "checked_message_id": msg_id},
+                "kind": "StreamResponseMessage",
+                "id": message_id,  # Use outer message_id for response ID
+                "content": {"status": "healthy", "checked_message_id": inner_msg_id},
                 "status": "success",
-                "created_at": datetime.now().isoformat(),
-                "user_id": user_id,  # Include user_id if available
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "user_id": user_id,
             }
             if return_stream:
-                # Assert type again closer to usage for type checker clarity
                 assert isinstance(return_stream, str)
                 r.xadd(return_stream, {"data": json.dumps(health_response)})
                 logger.info(f"Sent health check response to {return_stream}")
 
-            # Assert types again closer to usage for type checker clarity
             assert isinstance(REDIS_STREAM, str)
             assert isinstance(REDIS_CONSUMER_GROUP, str)
             r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
@@ -657,16 +676,21 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             return  # Exit early for health checks
         # --- End Health Check Logic ---
 
-        # Parse content if it's a string (e.g., double-encoded JSON)
-        if isinstance(content_raw, str):
-            try:
-                content = json.loads(content_raw)
-            except json.JSONDecodeError:
-                content = content_raw  # Keep as string if not valid JSON
-        else:
-            content = content_raw
+        # For non-HealthCheck messages, the content to be processed by user function
+        # is `actual_content_to_process`
+        # The `kind` and `id` for the Message object should be from `inner_content_data`
 
-        # print(f"Content: {content}")
+        # Parse actual_content_to_process if it's a string (e.g., double-encoded JSON)
+        # This might be redundant if actual_content_to_process is already a dict from inner_content_data.get("content")
+        if isinstance(actual_content_to_process, str):
+            try:
+                content_for_validation = json.loads(actual_content_to_process)
+            except json.JSONDecodeError:
+                content_for_validation = (
+                    actual_content_to_process  # Keep as string if not valid JSON
+                )
+        else:
+            content_for_validation = actual_content_to_process
 
         # --- Construct Input Object using Imported Types ---
         input_obj: Any = None
@@ -712,13 +736,15 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
 
                 if content_model_class:
                     try:
-                        content_model = content_model_class.model_validate(content)
+                        content_model = content_model_class.model_validate(
+                            content_for_validation
+                        )
                         # print(f"Validated content model: {content_model}")
                         input_obj = message_class(
-                            kind=kind,
-                            id=msg_id,
+                            kind=inner_kind,
+                            id=inner_msg_id,
                             content=content_model,
-                            created_at=int(created_at.timestamp()),
+                            created_at=int(inner_created_at.timestamp()),
                             return_stream=return_stream,
                             user_id=user_id,
                             orgs=orgs,
@@ -732,10 +758,10 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                         )
                         # Fallback to raw content in Message
                         input_obj = message_class(
-                            kind=kind,
-                            id=msg_id,
-                            content=cast(Any, content),
-                            created_at=int(created_at.timestamp()),
+                            kind=inner_kind,
+                            id=inner_msg_id,
+                            content=cast(Any, content_for_validation),
+                            created_at=int(inner_created_at.timestamp()),
                             return_stream=return_stream,
                             user_id=user_id,
                             orgs=orgs,
@@ -746,10 +772,10 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 else:
                     # No content type name or class found, use raw content
                     input_obj = message_class(
-                        kind=kind,
-                        id=msg_id,
-                        content=cast(Any, content),
-                        created_at=int(created_at.timestamp()),
+                        kind=inner_kind,
+                        id=inner_msg_id,
+                        content=cast(Any, content_for_validation),
+                        created_at=int(inner_created_at.timestamp()),
                         return_stream=return_stream,
                         user_id=user_id,
                         orgs=orgs,
@@ -776,21 +802,23 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                             logger.warning(
                                 f"Warning: Input type class '{param_type_name}' not found. Passing raw content."
                             )
-                        input_obj = content
+                        input_obj = content_for_validation
                     else:
                         logger.debug(f"Found input model class: {input_type_class}")
-                        input_obj = input_type_class.model_validate(content)
+                        input_obj = input_type_class.model_validate(
+                            content_for_validation
+                        )
                         logger.debug(f"Validated input model: {input_obj}")
                 except AttributeError:
                     logger.warning(
                         f"Warning: Input type class '{param_type_name}' not found in imported module."
                     )
-                    input_obj = content
+                    input_obj = content_for_validation
                 except Exception as e:
                     logger.error(
                         f"Error resolving/validating input type '{param_type_name}': {e}. Passing raw content."
                     )
-                    input_obj = content
+                    input_obj = content_for_validation
 
         except NameError as e:
             logger.error(
@@ -803,7 +831,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             raise  # Re-raise unexpected errors during input construction
 
         # print(f"Input object: {input_obj}") # Reduce verbosity
-        # logger.debug(f"Input object: {input_obj}") # Could use logger.debug if needed
+        logger.debug(f"Input object: {input_obj}")  # Could use logger.debug if needed
 
         # Execute the function
         logger.info("Executing function...")
