@@ -396,7 +396,68 @@ def processor(
     hot_reload: bool = True,
     debug: bool = False,
     name: Optional[str] = None,
+    wait_for_healthy: bool = False,
 ):
+    """
+    Decorator that creates a processor from a function.
+
+    This decorator transforms a function into a distributed processor that can be
+    deployed and executed remotely. The function code is uploaded to S3 and a
+    containerized processor is created.
+
+    Args:
+        image: Container image to use for the processor
+        setup_script: Optional script to run during container setup
+        scale: Scaling configuration for the processor
+        min_replicas: Minimum number of processor replicas
+        max_replicas: Maximum number of processor replicas
+        platform: Target platform for container deployment
+        accelerators: List of accelerators (e.g., GPUs) to request
+        namespace: Kubernetes namespace for the processor
+        labels: Additional labels to apply to the processor
+        env: Environment variables to set in the container
+        volumes: Volume mounts for the container
+        resources: Resource requests and limits
+        meters: Billing/metering configuration
+        authz: Authorization configuration
+        python_cmd: Python command to use (default: "python")
+        no_delete: Whether to prevent deletion of the processor
+        include: List of objects to include in the processor environment
+        init_func: Optional initialization function to run once
+        queue: Message queue configuration
+        timeout: Processor timeout configuration
+        ssh_keys: SSH keys for secure access
+        ports: Port configurations for the container
+        proxy_port: Proxy port configuration
+        health_check: Container health check configuration
+        execution_mode: Execution mode ("inline" or "subprocess")
+        config: Global configuration override
+        hot_reload: Enable/disable hot code reloading (default: True)
+        debug: Enable debug mode
+        name: Override processor name (defaults to function name)
+        wait_for_healthy: If True, wait for the processor to become healthy
+                         before the decorator returns (default: False)
+
+    Returns:
+        Processor: A Processor instance wrapping the decorated function
+
+    Example:
+        ```python
+        @processor(
+            image="python:3.11",
+            setup_script="pip install numpy",
+            wait_for_healthy=True
+        )
+        def my_processor(data: Message[InputModel]) -> OutputModel:
+            return OutputModel(result=data.content.value * 2)
+        ```
+
+    Note:
+        When wait_for_healthy=True, the decorator will send health check messages
+        to the processor and wait for successful responses before returning. This
+        ensures the processor is ready to accept requests but may add startup time.
+    """
+
     def decorator(
         func: Callable[[Any], Any],
     ) -> Processor:
@@ -1208,6 +1269,7 @@ def processor(
             max_replicas=max_replicas,
             scale_config=scale,
             no_delete=no_delete,
+            wait_for_healthy=wait_for_healthy,
         )
         logger.debug(
             f"Decorator: Processor instance '{processor_name}' created successfully."

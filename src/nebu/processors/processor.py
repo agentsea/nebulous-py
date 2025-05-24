@@ -1,6 +1,8 @@
 import json
 import threading
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+import time
+import uuid
+from typing import Any, Dict, Generic, List, Optional, TypeVar, cast
 
 import requests
 from pydantic import BaseModel
@@ -107,6 +109,7 @@ class Processor(Generic[InputType, OutputType]):
         config: Optional[GlobalConfig] = None,
         api_key: Optional[str] = None,
         no_delete: bool = False,
+        wait_for_healthy: bool = False,
     ):
         self.config = config or GlobalConfig.read()
         if not self.config:
@@ -208,6 +211,10 @@ class Processor(Generic[InputType, OutputType]):
             self.processor = V1Processor.model_validate(patch_response.json())
             logger.info(f"Updated Processor {self.processor.metadata.name}")
 
+        # --- Wait for health check if requested ---
+        if wait_for_healthy:
+            self._wait_for_health_check()
+
     def __call__(
         self,
         data: InputType,
@@ -230,6 +237,7 @@ class Processor(Generic[InputType, OutputType]):
         logs: bool = False,
         api_key: Optional[str] = None,
         user_key: Optional[str] = None,
+        timeout: Optional[float] = 600.0,
     ) -> OutputType | Dict[str, Any] | None:
         """
         Send data to the processor and optionally stream logs in the background.
@@ -260,6 +268,7 @@ class Processor(Generic[InputType, OutputType]):
             messages_url,
             json=stream_data.model_dump(mode="json", exclude_none=True),
             headers={"Authorization": f"Bearer {api_key}"},
+            timeout=timeout,
         )
         response.raise_for_status()
         send_response_json = response.json()
@@ -432,3 +441,64 @@ class Processor(Generic[InputType, OutputType]):
             self._log_thread = None
         else:
             logger.info(f"No active log stream to stop for {self.name}.")
+
+    def _wait_for_health_check(
+        self, timeout: float = 300.0, retry_interval: float = 5.0
+    ) -> None:
+        """
+        Wait for the processor to respond to health checks.
+
+        Args:
+            timeout: Maximum time to wait for health check in seconds
+            retry_interval: Time between health check attempts in seconds
+        """
+        if not self.processor or not self.processor.metadata.name:
+            raise ValueError("Processor not found, cannot perform health check")
+
+        logger.info(
+            f"Waiting for processor {self.processor.metadata.name} to be healthy..."
+        )
+
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                # Create a health check message
+                health_check_data = {
+                    "kind": "HealthCheck",
+                    "id": str(uuid.uuid4()),
+                    "content": {},
+                    "created_at": time.time(),
+                }
+
+                # Send health check and wait for response
+                response = self.send(
+                    data=cast(InputType, health_check_data),
+                    wait=True,
+                    timeout=30.0,  # Short timeout for individual health check
+                )
+
+                # Check if the response indicates health
+                if response and isinstance(response, dict):
+                    status = response.get("status")
+                    content = response.get("content", {})
+                    if status == "success" and content.get("status") == "healthy":
+                        logger.info(
+                            f"Processor {self.processor.metadata.name} is healthy!"
+                        )
+                        return
+
+                logger.debug(
+                    f"Health check attempt failed, retrying in {retry_interval}s..."
+                )
+
+            except Exception as e:
+                logger.debug(
+                    f"Health check failed with error: {e}, retrying in {retry_interval}s..."
+                )
+
+            time.sleep(retry_interval)
+
+        # If we get here, we timed out
+        raise TimeoutError(
+            f"Processor {self.processor.metadata.name} failed to become healthy within {timeout} seconds"
+        )
