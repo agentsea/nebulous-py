@@ -808,7 +808,18 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                         input_obj = input_type_class.model_validate(
                             content_for_validation
                         )
-                        logger.debug(f"Validated input model: {input_obj}")
+                        # Safe logging that avoids __repr__ issues with BaseModel objects
+                        try:
+                            if hasattr(input_obj, "model_dump"):
+                                logger.debug(
+                                    f"Validated input model (BaseModel): {input_obj.model_dump()}"
+                                )
+                            else:
+                                logger.debug(f"Validated input model: {input_obj}")
+                        except Exception as log_e:
+                            logger.debug(
+                                f"Validated input model: <object of type {type(input_obj).__name__}> (repr failed: {log_e})"
+                            )
                 except AttributeError:
                     logger.warning(
                         f"Warning: Input type class '{param_type_name}' not found in imported module."
@@ -830,13 +841,28 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             logger.error(f"Error constructing input object: {e}")
             raise  # Re-raise unexpected errors during input construction
 
-        # print(f"Input object: {input_obj}") # Reduce verbosity
-        logger.debug(f"Input object: {input_obj}")  # Could use logger.debug if needed
+        # Safe logging that avoids __repr__ issues with BaseModel objects
+        try:
+            if hasattr(input_obj, "model_dump"):
+                logger.debug(f"Input object (BaseModel): {input_obj.model_dump()}")
+            else:
+                logger.debug(f"Input object: {input_obj}")
+        except Exception as log_e:
+            logger.debug(
+                f"Input object: <object of type {type(input_obj).__name__}> (repr failed: {log_e})"
+            )
 
         # Execute the function
         logger.info("Executing function...")
         result = target_function(input_obj)
-        # logger.debug(f"Raw Result: {result}") # Debugging
+        # Safe logging that avoids __repr__ issues with BaseModel objects if this debug line is uncommented
+        # try:
+        #     if hasattr(result, "model_dump"):
+        #         logger.debug(f"Raw Result (BaseModel): {result.model_dump()}")
+        #     else:
+        #         logger.debug(f"Raw Result: {result}")
+        # except Exception as log_e:
+        #     logger.debug(f"Raw Result: <object of type {type(result).__name__}> (repr failed: {log_e})")
 
         result_content = None  # Default to None
         if result is not None:  # Only process if there's a result
