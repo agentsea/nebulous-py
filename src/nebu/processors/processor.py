@@ -311,6 +311,10 @@ class Processor(Generic[InputType, OutputType]):
         )
         response.raise_for_status()
         raw_response_json = response.json()
+
+        if "error" in raw_response_json:
+            raise Exception(raw_response_json["error"])
+
         raw_content = raw_response_json.get("content")
         logger.debug(f">>> Raw content: {raw_content}")
 

@@ -802,7 +802,13 @@ def processor(
         )
         origin = get_origin(param_type) if param_type else None
         args = get_args(param_type) if param_type else tuple()
-        logger.debug(f"Decorator: get_origin result: {origin}, get_args result: {args}")
+        logger.debug(
+            f"Decorator: For param_type '{param_type_str_repr}': origin = {origin!s}, args = {args!s}"
+        )  # More detailed log
+        print(
+            f"Decorator: For param_type '{param_type_str_repr}': origin = {origin!s}, args = {args!s}"
+        )  # More detailed log
+
         is_stream_message = False
         content_type = None
         content_type_name_from_regex = None  # Store regex result here
