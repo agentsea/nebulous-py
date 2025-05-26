@@ -1,6 +1,6 @@
 [project]
 name = "nebu"
-version = "0.1.110"
+version = "0.1.111"
 description = "A globally distributed container runtime"
 readme = "README.md"
 requires-python = ">=3.10.14"

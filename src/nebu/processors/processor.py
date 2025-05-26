@@ -539,8 +539,7 @@ class Processor(Generic[InputType, OutputType]):
                 # Check if the response indicates health
                 if response and isinstance(response, dict):
                     status = response.get("status")
-                    content = response.get("content", {})
-                    if status == "success" and content.get("status") == "healthy":
+                    if status == "healthy":
                         logger.info(
                             f"Processor {self.processor.metadata.name} is healthy!"
                         )
