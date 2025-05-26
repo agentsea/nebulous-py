@@ -135,22 +135,30 @@ class Processor(Generic[InputType, OutputType]):
         # Attempt to infer OutputType if schema_ is not provided
         if self.schema_ is None and hasattr(self, "__orig_class__"):
             type_args = get_args(self.__orig_class__)  # type: ignore
+            print(">>> type_args: ", type_args)
             if len(type_args) == 2:
                 output_type_candidate = type_args[1]
+                print(">>> output_type_candidate: ", output_type_candidate)
                 # Check if it looks like a Pydantic model class
                 if isinstance(output_type_candidate, type) and issubclass(
                     output_type_candidate, BaseModel
                 ):
+                    print(">>> output_type_candidate is a Pydantic model class")
                     logger.debug(
                         f"Inferred OutputType {output_type_candidate.__name__} from generic arguments."
                     )
                     self.schema_ = output_type_candidate
                 else:
+                    print(">>> output_type_candidate is not a Pydantic model class")
                     logger.debug(
                         f"Second generic argument {output_type_candidate} is not a Pydantic BaseModel. "
                         "Cannot infer OutputType."
                     )
             else:
+                print(
+                    "Could not infer OutputType from generic arguments: wrong number of type args found "
+                    f"(expected 2, got {len(type_args) if type_args else 0})."
+                )
                 logger.debug(
                     "Could not infer OutputType from generic arguments: wrong number of type args found "
                     f"(expected 2, got {len(type_args) if type_args else 0})."
