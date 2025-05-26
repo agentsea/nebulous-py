@@ -133,6 +133,8 @@ class Processor(Generic[InputType, OutputType]):
         self._log_thread: Optional[threading.Thread] = None
 
         # Attempt to infer OutputType if schema_ is not provided
+        print(">>> self.schema_: ", self.schema_)
+        print("self.__dict__: ", self.__dict__)
         if self.schema_ is None and hasattr(self, "__orig_class__"):
             type_args = get_args(self.__orig_class__)  # type: ignore
             print(">>> type_args: ", type_args)
