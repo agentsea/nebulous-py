@@ -366,6 +366,8 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
     global target_function, imported_module, local_namespace
     global execution_mode, r, REDIS_STREAM, REDIS_CONSUMER_GROUP
 
+    print(f">>> Processing message {message_id}")
+
     # --- Subprocess Execution Path ---
     if execution_mode == "subprocess":
         logger.info(f"Processing message {message_id} in subprocess...")
@@ -610,8 +612,15 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         logger.debug(f">> Raw payload: {raw_payload}")
 
         # --- Extract fields from the *inner* message content for HealthCheck and regular processing ---
-        # The actual message content is inside raw_payload[\"content\"]
+        # The actual message content is inside raw_payload["content"]
         inner_content_data = raw_payload.get("content", {})
+
+        # Add debug logging for content structure analysis
+        logger.debug(f">> inner_content_data type: {type(inner_content_data)}")
+        logger.debug(
+            f">> inner_content_data keys (if dict): {list(inner_content_data.keys()) if isinstance(inner_content_data, dict) else 'N/A'}"
+        )
+
         if not isinstance(inner_content_data, dict):
             # If content is not a dict (e.g. already a primitive from a non-Message processor)
             # we can't reliably get 'kind' or other fields from it.
@@ -625,11 +634,44 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             actual_content_to_process = inner_content_data  # Use it as is
             inner_created_at_str = None
         else:
-            inner_kind = inner_content_data.get("kind", "")
-            inner_msg_id = inner_content_data.get("id", "")
-            # The 'content' field of the inner_content_data is what the user function expects
-            actual_content_to_process = inner_content_data.get("content", {})
-            inner_created_at_str = inner_content_data.get("created_at")
+            # Check if this looks like a nested message structure (has kind/id/content fields)
+            # vs direct content data
+            has_message_structure = (
+                "kind" in inner_content_data
+                and "id" in inner_content_data
+                and "content" in inner_content_data
+            )
+
+            logger.debug(f">> has_message_structure: {has_message_structure}")
+
+            if has_message_structure:
+                # Nested message structure: extract from inner message
+                inner_kind = inner_content_data.get("kind", "")
+                inner_msg_id = inner_content_data.get("id", "")
+                actual_content_to_process = inner_content_data.get("content", {})
+                inner_created_at_str = inner_content_data.get("created_at")
+                logger.debug(
+                    f">> Using nested structure - inner_kind: {inner_kind}, inner_msg_id: {inner_msg_id}"
+                )
+                logger.debug(
+                    f">> actual_content_to_process keys: {list(actual_content_to_process.keys())}"
+                )
+            else:
+                # Direct content structure: the content data is directly in inner_content_data
+                inner_kind = raw_payload.get("kind", "")  # Get kind from outer payload
+                inner_msg_id = raw_payload.get("id", "")  # Get id from outer payload
+                actual_content_to_process = (
+                    inner_content_data  # Use inner_content_data directly
+                )
+                inner_created_at_str = raw_payload.get(
+                    "created_at"
+                )  # Get created_at from outer payload
+                logger.debug(
+                    f">> Using direct structure - inner_kind: {inner_kind}, inner_msg_id: {inner_msg_id}"
+                )
+                logger.debug(
+                    f">> actual_content_to_process keys: {list(actual_content_to_process.keys())}"
+                )
 
         # Attempt to parse inner_created_at, fallback to now()
         try:
@@ -685,12 +727,24 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         if isinstance(actual_content_to_process, str):
             try:
                 content_for_validation = json.loads(actual_content_to_process)
+                logger.debug(
+                    f">> Parsed JSON string content_for_validation keys: {list(content_for_validation.keys()) if isinstance(content_for_validation, dict) else 'N/A'}"
+                )
             except json.JSONDecodeError:
                 content_for_validation = (
                     actual_content_to_process  # Keep as string if not valid JSON
                 )
+                logger.debug(
+                    f">> Failed to parse JSON, keeping as string: {type(actual_content_to_process)}"
+                )
         else:
             content_for_validation = actual_content_to_process
+            logger.debug(
+                f">> Using actual_content_to_process directly: {type(content_for_validation)}"
+            )
+            logger.debug(
+                f">> content_for_validation keys: {list(content_for_validation.keys())}"
+            )
 
         # --- Construct Input Object using Imported Types ---
         input_obj: Any = None
@@ -736,9 +790,16 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
 
                 if content_model_class:
                     try:
+                        logger.debug(
+                            f">> Attempting to validate content with {content_model_class.__name__}"
+                        )
+                        logger.debug(
+                            f">> Content being validated: {json.dumps(content_for_validation, indent=2) if isinstance(content_for_validation, dict) else str(content_for_validation)}"
+                        )
                         content_model = content_model_class.model_validate(
                             content_for_validation
                         )
+                        logger.debug(f">> Successfully validated content model")
                         # print(f"Validated content model: {content_model}")
                         input_obj = message_class(
                             kind=inner_kind,
@@ -752,9 +813,15 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                             adapter=adapter,
                             api_key=api_key,
                         )
+                        logger.debug(
+                            f">> Successfully created Message object with validated content"
+                        )
                     except Exception as e:
                         logger.error(
                             f"Error validating/creating content model '{content_type_name}': {e}. Falling back."
+                        )
+                        logger.debug(
+                            f">> Content validation failed for: {json.dumps(content_for_validation, indent=2) if isinstance(content_for_validation, dict) else str(content_for_validation)}"
                         )
                         # Fallback to raw content in Message
                         input_obj = message_class(
@@ -769,8 +836,12 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                             adapter=adapter,
                             api_key=api_key,
                         )
+                        logger.debug(
+                            f">> Created Message object with raw content fallback"
+                        )
                 else:
                     # No content type name or class found, use raw content
+                    logger.debug(f">> No content model class found, using raw content")
                     input_obj = message_class(
                         kind=inner_kind,
                         id=inner_msg_id,
@@ -782,6 +853,9 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                         handle=handle,
                         adapter=adapter,
                         api_key=api_key,
+                    )
+                    logger.debug(
+                        f">> Created Message object with raw content (no content model class)"
                     )
             else:  # Not a stream message, use the function's parameter type
                 param_type_name = (
@@ -844,7 +918,15 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         # Safe logging that avoids __repr__ issues with BaseModel objects
         try:
             if hasattr(input_obj, "model_dump"):
-                logger.debug(f"Input object (BaseModel): {input_obj.model_dump()}")
+                try:
+                    # Use model_dump_json for safer serialization that handles nested objects
+                    logger.debug(
+                        f"Input object (BaseModel): {input_obj.model_dump_json()}"
+                    )
+                except Exception as dump_e:
+                    logger.debug(
+                        f"Input object: <BaseModel object of type {type(input_obj).__name__}> (model_dump failed: {dump_e})"
+                    )
             else:
                 logger.debug(f"Input object: {input_obj}")
         except Exception as log_e:
@@ -854,15 +936,13 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
 
         # Execute the function
         logger.info("Executing function...")
+
+        # Add warning about potential print statement issues in user code
+        logger.debug(
+            ">> About to execute user function - note: print statements in user code may fail if the Message object has validation issues"
+        )
+
         result = target_function(input_obj)
-        # Safe logging that avoids __repr__ issues with BaseModel objects if this debug line is uncommented
-        # try:
-        #     if hasattr(result, "model_dump"):
-        #         logger.debug(f"Raw Result (BaseModel): {result.model_dump()}")
-        #     else:
-        #         logger.debug(f"Raw Result: {result}")
-        # except Exception as log_e:
-        #     logger.debug(f"Raw Result: <object of type {type(result).__name__}> (repr failed: {log_e})")
 
         result_content = None  # Default to None
         if result is not None:  # Only process if there's a result
