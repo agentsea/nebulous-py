@@ -2,7 +2,17 @@ import json
 import threading
 import time
 import uuid
-from typing import Any, Dict, Generic, List, Optional, TypeVar, cast, get_args
+from typing import (
+    Any,
+    Dict,
+    Generic,
+    List,
+    Optional,
+    TypeVar,
+    cast,
+    get_args,
+    get_origin,
+)
 
 import requests
 from pydantic import BaseModel
@@ -101,7 +111,8 @@ class Processor(Generic[InputType, OutputType]):
         namespace: Optional[str] = None,
         labels: Optional[Dict[str, str]] = None,
         container: Optional[V1ContainerRequest] = None,
-        schema_: Optional[Any] = None,
+        input_model_cls: Optional[type[BaseModel]] = None,
+        output_model_cls: Optional[type[BaseModel]] = None,
         common_schema: Optional[str] = None,
         min_replicas: Optional[int] = None,
         max_replicas: Optional[int] = None,
@@ -124,7 +135,8 @@ class Processor(Generic[InputType, OutputType]):
         self.namespace = namespace
         self.labels = labels
         self.container = container
-        self.schema_ = schema_
+        self.input_model_cls = input_model_cls
+        self.output_model_cls = output_model_cls
         self.common_schema = common_schema
         self.min_replicas = min_replicas
         self.max_replicas = max_replicas
@@ -132,37 +144,26 @@ class Processor(Generic[InputType, OutputType]):
         self.processors_url = f"{self.orign_host}/v1/processors"
         self._log_thread: Optional[threading.Thread] = None
 
-        # Attempt to infer OutputType if schema_ is not provided
-        print(">>> self.schema_: ", self.schema_)
-        print("self.__dict__: ", self.__dict__)
-        if self.schema_ is None and hasattr(self, "__orig_class__"):
+        # Infer OutputType Pydantic class if output_model_cls is not provided
+        if self.output_model_cls is None and hasattr(self, "__orig_class__"):
             type_args = get_args(self.__orig_class__)  # type: ignore
-            print(">>> type_args: ", type_args)
             if len(type_args) == 2:
                 output_type_candidate = type_args[1]
-                print(">>> output_type_candidate: ", output_type_candidate)
-                # Check if it looks like a Pydantic model class
                 if isinstance(output_type_candidate, type) and issubclass(
                     output_type_candidate, BaseModel
                 ):
-                    print(">>> output_type_candidate is a Pydantic model class")
                     logger.debug(
-                        f"Inferred OutputType {output_type_candidate.__name__} from generic arguments."
+                        f"Inferred output_model_cls {output_type_candidate.__name__} from generic arguments."
                     )
-                    self.schema_ = output_type_candidate
+                    self.output_model_cls = output_type_candidate
                 else:
-                    print(">>> output_type_candidate is not a Pydantic model class")
                     logger.debug(
                         f"Second generic argument {output_type_candidate} is not a Pydantic BaseModel. "
-                        "Cannot infer OutputType."
+                        "Cannot infer output_model_cls."
                     )
             else:
-                print(
-                    "Could not infer OutputType from generic arguments: wrong number of type args found "
-                    f"(expected 2, got {len(type_args) if type_args else 0})."
-                )
                 logger.debug(
-                    "Could not infer OutputType from generic arguments: wrong number of type args found "
+                    "Could not infer output_model_cls from generic arguments: wrong number of type args found "
                     f"(expected 2, got {len(type_args) if type_args else 0})."
                 )
 
@@ -201,7 +202,6 @@ class Processor(Generic[InputType, OutputType]):
             processor_request = V1ProcessorRequest(
                 metadata=metadata,
                 container=container,
-                schema_=schema_,
                 common_schema=common_schema,
                 min_replicas=min_replicas,
                 max_replicas=max_replicas,
@@ -226,7 +226,6 @@ class Processor(Generic[InputType, OutputType]):
 
             update_processor = V1UpdateProcessor(
                 container=container,
-                schema_=schema_,
                 common_schema=common_schema,
                 min_replicas=min_replicas,
                 max_replicas=max_replicas,
@@ -341,38 +340,37 @@ class Processor(Generic[InputType, OutputType]):
 
         # Attempt to parse into OutputType if conditions are met
         print(f">>> wait: {wait}")
-        print(f">>> self.schema_: {self.schema_}")
-        print(">>> type(self.schema_): ", type(self.schema_))
-        print(f">>> isinstance(self.schema_, type): {isinstance(self.schema_, type)}")
+        print(f">>> self.output_model_cls: {self.output_model_cls}")
+        print(">>> type(self.output_model_cls): ", type(self.output_model_cls))
+        print(
+            f">>> isinstance(self.output_model_cls, type): {isinstance(self.output_model_cls, type)}"
+        )
         print(f">>> isinstance(raw_content, dict): {isinstance(raw_content, dict)}")
         if (
             wait
-            and self.schema_
-            and isinstance(self.schema_, type)
-            and issubclass(self.schema_, BaseModel)  # type: ignore
+            and self.output_model_cls
+            and isinstance(self.output_model_cls, type)
+            and issubclass(self.output_model_cls, BaseModel)  # type: ignore
             and isinstance(raw_content, dict)
-        ):  # Check if raw_content is a dict
+        ):
             print(f">>> raw_content: {raw_content}")
             try:
-                # self.schema_ is assumed to be the Pydantic model class for OutputType
-                # Parse raw_content instead of the full response
-                parsed_model = self.schema_.model_validate(raw_content)
+                parsed_model = self.output_model_cls.model_validate(raw_content)
                 print(f">>> parsed_model: {parsed_model}")
-                # Cast to OutputType to satisfy the linter with generics
                 parsed_output: OutputType = cast(OutputType, parsed_model)
                 print(f">>> parsed_output: {parsed_output}")
                 return parsed_output
-            except (
-                Exception
-            ) as e:  # Consider pydantic.ValidationError for more specific handling
+            except Exception as e:
                 print(f">>> error: {e}")
-                schema_name = getattr(self.schema_, "__name__", str(self.schema_))
+                model_name = getattr(
+                    self.output_model_cls, "__name__", str(self.output_model_cls)
+                )
                 logger.error(
-                    f"Processor {processor_name}: Failed to parse 'content' field into output type {schema_name}. "
+                    f"Processor {processor_name}: Failed to parse 'content' field into output type {model_name}. "
                     f"Error: {e}. Returning raw JSON response."
                 )
-                # Fallback to returning the raw JSON response
                 return raw_content
+        # Fallback logic using self.schema_ has been removed.
 
         return raw_content
 
@@ -401,6 +399,8 @@ class Processor(Generic[InputType, OutputType]):
         namespace: Optional[str] = None,
         config: Optional[GlobalConfig] = None,
         api_key: Optional[str] = None,
+        input_model_cls: Optional[type[BaseModel]] = None,
+        output_model_cls: Optional[type[BaseModel]] = None,
     ):
         """
         Get a Processor from the remote server.
@@ -412,27 +412,60 @@ class Processor(Generic[InputType, OutputType]):
             raise ValueError("Processor not found")
         processor_v1 = processors[0]
 
-        out = cls.__new__(cls)
-        out.processor = processor_v1
-        out.config = config or GlobalConfig.read()
-        if not out.config:
-            raise ValueError("No config found")
-        out.current_server = out.config.get_current_server_config()
-        if not out.current_server:
-            raise ValueError("No server config found")
-        out.api_key = api_key or out.current_server.api_key
-        out.orign_host = out.current_server.server
-        out.processors_url = f"{out.orign_host}/v1/processors"
-        out.name = name
-        out.namespace = namespace
+        # Try to infer Input/Output model classes if Processor.load is called as generic
+        # e.g., MyProcessor = Processor[MyInput, MyOutput]; MyProcessor.load(...)
+        loaded_input_model_cls: Optional[type[BaseModel]] = None
+        loaded_output_model_cls: Optional[type[BaseModel]] = None
 
-        # Set specific fields from the processor
-        out.container = processor_v1.container
-        out.schema_ = processor_v1.schema_
-        out.common_schema = processor_v1.common_schema
-        out.min_replicas = processor_v1.min_replicas
-        out.max_replicas = processor_v1.max_replicas
-        out.scale_config = processor_v1.scale
+        # __orig_bases__ usually contains the generic version of the class if it was parameterized.
+        # We look for Processor[...] in the bases.
+        if hasattr(cls, "__orig_bases__"):
+            for base in cls.__orig_bases__:  # type: ignore
+                if get_origin(base) is Processor:
+                    type_args = get_args(base)
+                    if len(type_args) == 2:
+                        input_arg, output_arg = type_args
+                        if isinstance(input_arg, type) and issubclass(
+                            input_arg, BaseModel
+                        ):
+                            loaded_input_model_cls = input_arg
+                        if isinstance(output_arg, type) and issubclass(
+                            output_arg, BaseModel
+                        ):
+                            loaded_output_model_cls = output_arg
+                    break  # Found Processor generic base
+
+        # Determine final model classes, prioritizing overrides
+        final_input_model_cls = (
+            input_model_cls if input_model_cls is not None else loaded_input_model_cls
+        )
+        final_output_model_cls = (
+            output_model_cls
+            if output_model_cls is not None
+            else loaded_output_model_cls
+        )
+
+        out = cls.__new__(cls)  # type: ignore
+        # If generic types were successfully inferred or overridden, pass them to init
+        # Otherwise, they will be None, and __init__ might try __orig_class__ if called on instance
+        out.__init__(  # type: ignore
+            name=processor_v1.metadata.name,  # Use name from fetched metadata
+            namespace=processor_v1.metadata.namespace,  # Use namespace from fetched metadata
+            labels=processor_v1.metadata.labels,  # Use labels from fetched metadata
+            container=processor_v1.container,
+            input_model_cls=final_input_model_cls,  # Use determined input model
+            output_model_cls=final_output_model_cls,  # Use determined output model
+            common_schema=processor_v1.common_schema,
+            min_replicas=processor_v1.min_replicas,
+            max_replicas=processor_v1.max_replicas,
+            scale_config=processor_v1.scale,
+            config=config,  # Pass original config
+            api_key=api_key,  # Pass original api_key
+        )
+        # The __init__ call above handles most setup. We store the fetched processor data.
+        out.processor = processor_v1
+        # self.schema_ was removed, so no assignment for it here from processor_v1.schema_
+        # out.common_schema = processor_v1.common_schema # This is now set in __init__
 
         return out
 
@@ -549,7 +582,7 @@ class Processor(Generic[InputType, OutputType]):
 
                 # Send health check and wait for response
                 response = self.send(
-                    data=health_check_data,  # type: ignore
+                    data=health_check_data,  # type: ignore[arg-type]
                     wait=True,
                     timeout=30.0,  # Short timeout for individual health check
                 )

@@ -1194,6 +1194,52 @@ def processor(
 
         # --- Final Setup ---
         logger.debug("Decorator: Preparing final Processor object...")
+
+        # Determine ResolvedInputType for Processor Generic
+        ResolvedInputType: type[BaseModel] = (
+            BaseModel  # Default to BaseModel to satisfy generic bound
+        )
+        if is_stream_message:
+            if (
+                content_type
+                and isinstance(content_type, type)
+                and issubclass(content_type, BaseModel)
+            ):
+                ResolvedInputType = content_type
+            else:
+                logger.warning(
+                    f"Decorator: Message type hint found, but ContentType '{content_type!s}' is not a valid Pydantic Model. Defaulting InputType to BaseModel."
+                )
+                # ResolvedInputType remains BaseModel (default)
+        elif (
+            param_type
+            and isinstance(param_type, type)
+            and issubclass(param_type, BaseModel)
+        ):
+            ResolvedInputType = param_type  # Function takes the data model directly
+        else:
+            logger.warning(
+                f"Decorator: Parameter type '{param_type!s}' is not a valid Pydantic Model. Defaulting InputType to BaseModel."
+            )
+            # ResolvedInputType remains BaseModel (default)
+
+        ResolvedOutputType: type[BaseModel] = BaseModel  # Default to BaseModel
+        if (
+            return_type
+            and isinstance(return_type, type)
+            and issubclass(return_type, BaseModel)
+        ):
+            ResolvedOutputType = return_type
+        elif return_type is not None:  # It was something, but not a BaseModel subclass
+            logger.warning(
+                f"Decorator: Return type '{return_type!s}' is not a valid Pydantic Model. Defaulting OutputType to BaseModel."
+            )
+        # Else (return_type is None), ResolvedOutputType remains BaseModel
+
+        logger.debug(
+            f"Decorator: Resolved Generic Types for Processor: InputType={ResolvedInputType.__name__}, OutputType={ResolvedOutputType.__name__}"
+        )
+
         metadata = V1ResourceMetaRequest(
             name=processor_name, namespace=effective_namespace, labels=labels
         )
@@ -1225,7 +1271,7 @@ def processor(
         final_command = "\n".join(all_commands)
 
         logger.debug(
-            f"Decorator: Final container command:\n-------\n{final_command}\n-------"
+            f"Decorator: Final container command:\\n-------\\n{final_command}\\n-------"
         )
 
         container_request = V1ContainerRequest(
@@ -1259,21 +1305,28 @@ def processor(
             else:
                 logger.debug(f"  {env_var.key}: {value_str}")
 
-        processor_instance = Processor(
+        # Create the generically typed Processor instance
+        _processor_instance = Processor[ResolvedInputType, ResolvedOutputType](
             name=processor_name,
             namespace=effective_namespace,
             labels=labels,
             container=container_request,
-            schema_=None,  # Schema info might be derived differently now if needed
+            input_model_cls=ResolvedInputType,
+            output_model_cls=ResolvedOutputType,
             common_schema=None,
             min_replicas=min_replicas,
             max_replicas=max_replicas,
             scale_config=scale,
+            config=effective_config,
+            api_key=api_key,
             no_delete=no_delete,
             wait_for_healthy=wait_for_healthy,
         )
+        # Type hint for the variable. The instance itself IS correctly typed with specific models.
+        processor_instance: Processor[BaseModel, BaseModel] = _processor_instance
+
         logger.debug(
-            f"Decorator: Processor instance '{processor_name}' created successfully."
+            f"Decorator: Processor instance '{processor_name}' created successfully with generic types."
         )
         # Store original func for potential local invocation/testing? Keep for now.
         # TODO: Add original_func to Processor model definition if this is desired
