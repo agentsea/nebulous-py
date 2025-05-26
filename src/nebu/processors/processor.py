@@ -1,7 +1,8 @@
 import json
 import threading
 import time
-import uuid
+
+# import uuid # Removed unused import
 from typing import (
     Any,
     Dict,
@@ -23,6 +24,7 @@ from nebu.meta import V1ResourceMetaRequest, V1ResourceReference
 from nebu.processors.models import (
     V1ContainerRequest,
     V1Processor,
+    V1ProcessorHealthResponse,
     V1ProcessorRequest,
     V1Processors,
     V1ProcessorScaleRequest,
@@ -246,7 +248,7 @@ class Processor(Generic[InputType, OutputType]):
 
         # --- Wait for health check if requested ---
         if wait_for_healthy:
-            self.wait_for_health_check()
+            self.wait_for_healthy()
 
     def __call__(
         self,
@@ -559,11 +561,11 @@ class Processor(Generic[InputType, OutputType]):
         else:
             logger.info(f"No active log stream to stop for {self.name}.")
 
-    def wait_for_health_check(
+    def wait_for_healthy(
         self, timeout: float = 3600.0, retry_interval: float = 5.0
     ) -> None:
         """
-        Wait for the processor to respond to health checks.
+        Wait for the processor to respond to health checks using the health endpoint.
 
         Args:
             timeout: Maximum time to wait for health check in seconds
@@ -573,40 +575,25 @@ class Processor(Generic[InputType, OutputType]):
             raise ValueError("Processor not found, cannot perform health check")
 
         logger.info(
-            f"Waiting for processor {self.processor.metadata.name} to be healthy..."
+            f"Waiting for processor {self.processor.metadata.name} to be healthy via health endpoint..."
         )
 
         start_time = time.time()
         while time.time() - start_time < timeout:
             try:
-                # Create a health check message
-                health_check_data = {
-                    "kind": "HealthCheck",
-                    "id": str(uuid.uuid4()),
-                    "content": {},
-                    "created_at": time.time(),
-                }
-
-                # Send health check and wait for response
-                response = self.send(
-                    data=health_check_data,  # type: ignore[arg-type]
-                    wait=True,
-                    timeout=30.0,  # Short timeout for individual health check
+                health_response = self.health()  # Use the new health() method
+                logger.info(
+                    f">>> Health check response: {health_response.model_dump_json()}"
                 )
-                logger.info(f">>> Health check response: {response}")
 
                 # Check if the response indicates health
-                if response and isinstance(response, dict):
-                    status = response.get("status")
-                    if status == "healthy":
-                        logger.info(
-                            f"Processor {self.processor.metadata.name} is healthy!"
-                        )
-                        return
-
-                logger.info(
-                    f"Health check attempt failed, retrying in {retry_interval}s..."
-                )
+                if health_response.status == "ok":  # Check for "ok" status
+                    logger.info(f"Processor {self.processor.metadata.name} is healthy!")
+                    return
+                else:
+                    logger.info(
+                        f"Processor {self.processor.metadata.name} reported status: {health_response.status}. Retrying in {retry_interval}s..."
+                    )
 
             except Exception as e:
                 logger.info(
@@ -619,3 +606,39 @@ class Processor(Generic[InputType, OutputType]):
         raise TimeoutError(
             f"Processor {self.processor.metadata.name} failed to become healthy within {timeout} seconds"
         )
+
+    def health(self) -> V1ProcessorHealthResponse:
+        """
+        Performs a health check on the processor by calling the health endpoint.
+        """
+        if (
+            not self.processor
+            or not self.processor.metadata.name
+            or not self.processor.metadata.namespace
+        ):
+            raise ValueError(
+                "Processor not found or missing metadata (name/namespace), cannot perform health check."
+            )
+
+        health_url = f"{self.orign_host}/v1/processors/{self.processor.metadata.namespace}/{self.processor.metadata.name}/health"
+        logger.debug(f"Calling health check endpoint: {health_url}")
+
+        try:
+            response = requests.get(
+                health_url,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=30.0,  # Standard timeout for a health check
+            )
+            response.raise_for_status()  # Raise an exception for HTTP errors
+            health_response_data = response.json()
+            return V1ProcessorHealthResponse.model_validate(health_response_data)
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Health check request to {health_url} failed: {e}")
+            # Optionally, return a V1ProcessorHealthResponse indicating an error
+            # For now, re-raising the exception or a custom one might be better
+            raise RuntimeError(f"Failed to get health status: {e}") from e
+        except Exception as e:
+            logger.error(f"An unexpected error occurred during health check: {e}")
+            raise RuntimeError(
+                f"Unexpected error during health status retrieval: {e}"
+            ) from e

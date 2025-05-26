@@ -149,3 +149,9 @@ class V1OpenAIStreamResponse(BaseModel):
     content: Any  # Using Any for ChatCompletionResponse
     created_at: int
     user_id: Optional[str] = None
+
+
+class V1ProcessorHealthResponse(BaseModel):
+    status: str
+    message: Optional[str] = None
+    details: Optional[Any] = None

@@ -5,12 +5,15 @@ import os
 import socket
 import sys
 import time
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import redis
 import socks
 from redis import ConnectionError, ResponseError
 from redis.exceptions import TimeoutError as RedisTimeoutError
+
+# Assuming these are imported from other modules
+from nebu.processors.models import V1ProcessorHealthResponse
 
 
 def setup_health_logging():
@@ -50,16 +53,53 @@ def process_health_check_message(
     """Processes a single health check message."""
     logger.info(f"Processing health check message {message_id}: {message_data}")
 
-    # Parse the message if it contains JSON data
+    health_status = "ok"
+    health_message: Optional[str] = "Health check processed successfully."
+    details: Optional[Dict[str, Any]] = None
+    return_stream: Optional[str] = None
+
     try:
         if "data" in message_data:
             data = json.loads(message_data["data"])
             logger.info(f"Health check data: {data}")
+            # Example: Extract return_stream if present in the health check data
+            return_stream = data.get("return_stream")
+            # Example: Update details if provided
+            if "check_details" in data:
+                details = {"processed_details": data["check_details"]}
+
     except (json.JSONDecodeError, KeyError) as e:
         logger.warning(f"Could not parse health check message data: {e}")
+        health_status = "error"
+        health_message = f"Failed to parse health check message data: {e}"
+        details = {"error": str(e)}
 
-    # You could add more logic here, e.g., update an internal health status,
-    # send a response, perform actual health checks, etc.
+    # Construct the health response
+    health_response = V1ProcessorHealthResponse(
+        status=health_status, message=health_message, details=details
+    )
+
+    logger.info(
+        f"Health response for message {message_id}: {health_response.model_dump_json()}"
+    )
+
+    # If a return_stream is specified, send the response there
+    if return_stream:
+        try:
+            # It's good practice to set a maxlen for the return stream to prevent it from growing indefinitely
+            redis_conn.xadd(
+                return_stream,
+                health_response.model_dump(),  # type: ignore[arg-type]
+                maxlen=1000,
+                approximate=True,
+            )
+            logger.info(
+                f"Sent health response for {message_id} to stream: {return_stream}"
+            )
+        except Exception as e_resp_send:
+            logger.error(
+                f"Failed to send health response for {message_id} to stream {return_stream}: {e_resp_send}"
+            )
 
     # Acknowledge the health check message
     try:
