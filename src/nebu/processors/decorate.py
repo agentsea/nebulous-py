@@ -648,6 +648,7 @@ def processor(
                 destination=s3_destination_uri,
                 delete=True,
                 dry_run=False,
+                excludes=["__pycache__", "*.pyc"],  # Add excludes here
             )
             logger.debug("Decorator: S3 code upload completed.")
 
