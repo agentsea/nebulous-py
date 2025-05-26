@@ -315,6 +315,9 @@ class Processor(Generic[InputType, OutputType]):
         if "error" in raw_response_json:
             raise Exception(raw_response_json["error"])
 
+        if "status" in raw_response_json:
+            return raw_response_json
+
         raw_content = raw_response_json.get("content")
         logger.debug(f">>> Raw content: {raw_content}")
 

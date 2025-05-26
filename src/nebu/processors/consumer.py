@@ -33,10 +33,19 @@ local_namespace: Dict[str, Any] = {}  # Namespace for included objects
 last_load_mtime: float = 0.0
 entrypoint_abs_path: Optional[str] = None
 
+# Global health check subprocess
+health_subprocess: Optional[subprocess.Popen] = None
+
 REDIS_CONSUMER_GROUP = os.environ.get("REDIS_CONSUMER_GROUP")
 REDIS_STREAM = os.environ.get("REDIS_STREAM")
 NEBU_EXECUTION_MODE = os.environ.get("NEBU_EXECUTION_MODE", "inline").lower()
 execution_mode = NEBU_EXECUTION_MODE
+
+# Define health check stream and group names
+REDIS_HEALTH_STREAM = f"{REDIS_STREAM}.health" if REDIS_STREAM else None
+REDIS_HEALTH_CONSUMER_GROUP = (
+    f"{REDIS_CONSUMER_GROUP}-health" if REDIS_CONSUMER_GROUP else None
+)
 
 if execution_mode not in ["inline", "subprocess"]:
     logger.warning(
@@ -328,20 +337,34 @@ socks.set_default_proxy(socks.SOCKS5, "localhost", 1055)
 socket.socket = socks.socksocket
 logger.info("Configured SOCKS5 proxy for socket connections via localhost:1055")
 
-# Connect to Redis
-try:
-    # Parse the Redis URL to handle potential credentials or specific DBs if needed
-    # Although from_url should work now with the patched socket
-    r = redis.from_url(
-        REDIS_URL, decode_responses=True
-    )  # Added decode_responses for convenience
-    r.ping()  # Test connection
-    redis_info = REDIS_URL.split("@")[-1] if "@" in REDIS_URL else REDIS_URL
-    logger.info(f"Connected to Redis via SOCKS proxy at {redis_info}")
-except Exception as e:
-    logger.critical(f"Failed to connect to Redis via SOCKS proxy: {e}")
-    logger.exception("Redis Connection Error Traceback:")
-    sys.exit(1)
+# Global Redis connection for the main consumer
+r: redis.Redis  # Initialized by connect_redis, which sys.exits on failure
+
+
+# --- Connect to Redis (Main Consumer) ---
+def connect_redis(redis_url: str) -> redis.Redis:
+    """Connects to Redis and returns the connection object."""
+    try:
+        # Parse the Redis URL to handle potential credentials or specific DBs if needed
+        # Although from_url should work now with the patched socket
+        logger.info(
+            f"Attempting to connect to Redis at {redis_url.split('@')[-1] if '@' in redis_url else redis_url}"
+        )
+        conn = redis.from_url(
+            redis_url, decode_responses=True
+        )  # Added decode_responses for convenience
+        conn.ping()  # Test connection
+        redis_info = redis_url.split("@")[-1] if "@" in redis_url else redis_url
+        logger.info(f"Connected to Redis via SOCKS proxy at {redis_info}")
+        return conn
+    except Exception as e:
+        logger.critical(f"Failed to connect to Redis via SOCKS proxy: {e}")
+        logger.exception("Redis Connection Error Traceback:")
+        sys.exit(1)
+
+
+r = connect_redis(REDIS_URL)
+
 
 # Create consumer group if it doesn't exist
 try:
@@ -358,6 +381,103 @@ except ResponseError as e:
     else:
         logger.error(f"Error creating consumer group: {e}")
         logger.exception("Consumer Group Creation Error Traceback:")
+
+
+# --- Health Check Subprocess Management ---
+def start_health_check_subprocess() -> Optional[subprocess.Popen]:
+    """Start the health check consumer subprocess."""
+    global REDIS_HEALTH_STREAM, REDIS_HEALTH_CONSUMER_GROUP
+
+    if not all([REDIS_URL, REDIS_HEALTH_STREAM, REDIS_HEALTH_CONSUMER_GROUP]):
+        logger.warning(
+            "[Consumer] Health check stream not configured. Health consumer subprocess not started."
+        )
+        return None
+
+    try:
+        # Type assertions to ensure variables are strings before using them
+        assert isinstance(REDIS_HEALTH_STREAM, str)
+        assert isinstance(REDIS_HEALTH_CONSUMER_GROUP, str)
+
+        # Prepare environment variables for the subprocess
+        health_env = os.environ.copy()
+        health_env["REDIS_HEALTH_STREAM"] = REDIS_HEALTH_STREAM
+        health_env["REDIS_HEALTH_CONSUMER_GROUP"] = REDIS_HEALTH_CONSUMER_GROUP
+
+        # Start the health check worker subprocess
+        health_cmd = [
+            sys.executable,
+            "-u",  # Force unbuffered stdout/stderr
+            "-m",
+            "nebu.processors.consumer_health_worker",
+        ]
+
+        process = subprocess.Popen(
+            health_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Combine stderr with stdout
+            text=True,
+            encoding="utf-8",
+            env=health_env,
+            bufsize=1,  # Line buffered
+        )
+
+        logger.info(
+            f"[Consumer] Health check subprocess started with PID {process.pid}"
+        )
+        return process
+
+    except Exception as e:
+        logger.error(f"[Consumer] Failed to start health check subprocess: {e}")
+        logger.exception("Health Subprocess Start Error Traceback:")
+        return None
+
+
+def monitor_health_subprocess(process: subprocess.Popen) -> None:
+    """Monitor the health check subprocess and log its output."""
+    try:
+        # Read output from the subprocess
+        if process.stdout:
+            for line in iter(process.stdout.readline, ""):
+                logger.info(f"[HealthSubprocess] {line.strip()}")
+        process.stdout.close() if process.stdout else None
+    except Exception as e:
+        logger.error(f"[Consumer] Error monitoring health subprocess: {e}")
+
+
+def check_health_subprocess() -> bool:
+    """Check if the health subprocess is still running and restart if needed."""
+    global health_subprocess
+
+    if health_subprocess is None:
+        return False
+
+    # Check if process is still running
+    if health_subprocess.poll() is None:
+        return True  # Still running
+
+    # Process has exited
+    exit_code = health_subprocess.returncode
+    logger.warning(
+        f"[Consumer] Health subprocess exited with code {exit_code}. Restarting..."
+    )
+
+    # Start a new health subprocess
+    health_subprocess = start_health_check_subprocess()
+
+    if health_subprocess:
+        # Start monitoring thread for the new subprocess
+        monitor_thread = threading.Thread(
+            target=monitor_health_subprocess, args=(health_subprocess,), daemon=True
+        )
+        monitor_thread.start()
+        logger.info(
+            "[Consumer] Health subprocess restarted and monitoring thread started."
+        )
+        return True
+    else:
+        logger.error("[Consumer] Failed to restart health subprocess.")
+        return False
 
 
 # Function to process messages
@@ -1088,11 +1208,35 @@ logger.info(
     f"[Consumer] Hot code reloading is {'DISABLED' if disable_hot_reload else 'ENABLED'}."
 )
 
+# Start the health check consumer subprocess
+if REDIS_HEALTH_STREAM and REDIS_HEALTH_CONSUMER_GROUP:
+    health_subprocess = start_health_check_subprocess()
+    if health_subprocess:
+        # Start monitoring thread for subprocess output
+        monitor_thread = threading.Thread(
+            target=monitor_health_subprocess, args=(health_subprocess,), daemon=True
+        )
+        monitor_thread.start()
+        logger.info(
+            f"[Consumer] Health check subprocess for {REDIS_HEALTH_STREAM} started and monitoring thread started."
+        )
+    else:
+        logger.error("[Consumer] Failed to start health check subprocess.")
+else:
+    logger.warning(
+        "[Consumer] Health check stream not configured. Health consumer subprocess not started."
+    )
+
 try:
     while True:
         logger.debug(
             f"[{datetime.now(timezone.utc).isoformat()}] --- Top of main loop ---"
         )  # Added log
+
+        # --- Check Health Subprocess Status ---
+        if health_subprocess:
+            check_health_subprocess()
+
         # --- Check for Code Updates ---
         if not disable_hot_reload:
             logger.debug(
@@ -1356,18 +1500,21 @@ except ConnectionError as e:
     # Attempt to reconnect explicitly
     try:
         logger.info("Attempting Redis reconnection...")
-        # Close existing potentially broken connection? `r.close()` if available
-        r = redis.from_url(REDIS_URL, decode_responses=True)
-        r.ping()
+        # Close existing potentially broken connection?
+        if r:  # Check if r was initialized
+            try:
+                r.close()
+            except Exception:
+                pass  # Ignore errors during close
+        r = connect_redis(REDIS_URL)  # connect_redis will sys.exit on failure
         logger.info("Reconnected to Redis.")
-    except Exception as recon_e:
+    except Exception as recon_e:  # Should not be reached if connect_redis exits
         logger.error(f"Failed to reconnect to Redis: {recon_e}")
-        # Keep waiting
 
 except ResponseError as e:
     logger.error(f"Redis command error: {e}")
     # Should we exit or retry?
-    if "NOGROUP" in str(e):
+    if r and "NOGROUP" in str(e):  # Check if r is initialized
         logger.critical("Consumer group seems to have disappeared. Exiting.")
         sys.exit(1)
     time.sleep(1)
@@ -1379,4 +1526,15 @@ except Exception as e:
 
 finally:
     logger.info("Consumer loop exited.")
-    # Any other cleanup needed?
+    # Cleanup health subprocess
+    if health_subprocess and health_subprocess.poll() is None:
+        logger.info("[Consumer] Terminating health check subprocess...")
+        health_subprocess.terminate()
+        try:
+            health_subprocess.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "[Consumer] Health subprocess did not terminate gracefully, killing it."
+            )
+            health_subprocess.kill()
+        logger.info("[Consumer] Health subprocess cleanup complete.")
