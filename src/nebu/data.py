@@ -59,7 +59,7 @@ def rclone_copy(
         source_dir,
         destination,
         f"--transfers={transfers}",
-        "--progress",
+        # "--progress",
     ]
 
     if dry_run:
@@ -1171,7 +1171,7 @@ class RcloneBucket(StorageBucket):
             "--modify-window=2s",
             "--log-level=DEBUG" if self.verbose else "--log-level=INFO",
             "--log-format=date,time,level,message",
-            "--progress",  # Add progress display
+            # "--progress",  # Add progress display
         ]
         if dry_run:
             rc_args.append("--dry-run")
@@ -1286,7 +1286,7 @@ class RcloneBucket(StorageBucket):
         rc_args = [
             "--log-level=DEBUG" if self.verbose else "--log-level=INFO",
             "--log-format=date,time,level,message",
-            "--progress",  # Add progress display
+            # "--progress",  # Add progress display
         ]
 
         # Set environment variables for AWS credentials if they exist

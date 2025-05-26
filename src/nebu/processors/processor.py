@@ -2,7 +2,7 @@ import json
 import threading
 import time
 import uuid
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+from typing import Any, Dict, Generic, List, Optional, TypeVar, cast, get_args
 
 import requests
 from pydantic import BaseModel
@@ -132,6 +132,30 @@ class Processor(Generic[InputType, OutputType]):
         self.processors_url = f"{self.orign_host}/v1/processors"
         self._log_thread: Optional[threading.Thread] = None
 
+        # Attempt to infer OutputType if schema_ is not provided
+        if self.schema_ is None and hasattr(self, "__orig_class__"):
+            type_args = get_args(self.__orig_class__)  # type: ignore
+            if len(type_args) == 2:
+                output_type_candidate = type_args[1]
+                # Check if it looks like a Pydantic model class
+                if isinstance(output_type_candidate, type) and issubclass(
+                    output_type_candidate, BaseModel
+                ):
+                    logger.debug(
+                        f"Inferred OutputType {output_type_candidate.__name__} from generic arguments."
+                    )
+                    self.schema_ = output_type_candidate
+                else:
+                    logger.debug(
+                        f"Second generic argument {output_type_candidate} is not a Pydantic BaseModel. "
+                        "Cannot infer OutputType."
+                    )
+            else:
+                logger.debug(
+                    "Could not infer OutputType from generic arguments: wrong number of type args found "
+                    f"(expected 2, got {len(type_args) if type_args else 0})."
+                )
+
         # Fetch existing Processors
         response = requests.get(
             self.processors_url, headers={"Authorization": f"Bearer {self.api_key}"}
@@ -222,12 +246,18 @@ class Processor(Generic[InputType, OutputType]):
         logs: bool = False,
         api_key: Optional[str] = None,
         user_key: Optional[str] = None,
+        timeout: Optional[float] = 600.0,
     ) -> OutputType | Dict[str, Any] | None:
         """
         Allows the Processor instance to be called like a function, sending data.
         """
         return self.send(
-            data=data, wait=wait, logs=logs, api_key=api_key, user_key=user_key
+            data=data,
+            wait=wait,
+            logs=logs,
+            api_key=api_key,
+            user_key=user_key,
+            timeout=timeout,
         )
 
     def send(
@@ -271,7 +301,9 @@ class Processor(Generic[InputType, OutputType]):
             timeout=timeout,
         )
         response.raise_for_status()
-        send_response_json = response.json()
+        raw_response_json = response.json()
+        raw_content = raw_response_json.get("content")
+        logger.debug(f">>> Raw content: {raw_content}")
 
         # --- Fetch Logs (if requested and not already running) ---
         if logs:
@@ -297,7 +329,33 @@ class Processor(Generic[InputType, OutputType]):
             else:
                 logger.info(f"Log fetching is already running for {processor_name}.")
 
-        return send_response_json
+        # Attempt to parse into OutputType if conditions are met
+        if (
+            wait
+            and self.schema_
+            and isinstance(self.schema_, type)
+            and issubclass(self.schema_, BaseModel)  # type: ignore
+            and isinstance(raw_content, dict)
+        ):  # Check if raw_content is a dict
+            try:
+                # self.schema_ is assumed to be the Pydantic model class for OutputType
+                # Parse raw_content instead of the full response
+                parsed_model = self.schema_.model_validate(raw_content)
+                # Cast to OutputType to satisfy the linter with generics
+                parsed_output: OutputType = cast(OutputType, parsed_model)
+                return parsed_output
+            except (
+                Exception
+            ) as e:  # Consider pydantic.ValidationError for more specific handling
+                schema_name = getattr(self.schema_, "__name__", str(self.schema_))
+                logger.error(
+                    f"Processor {processor_name}: Failed to parse 'content' field into output type {schema_name}. "
+                    f"Error: {e}. Returning raw JSON response."
+                )
+                # Fallback to returning the raw JSON response
+                return raw_content
+
+        return raw_content
 
     def scale(self, replicas: int) -> Dict[str, Any]:
         """
