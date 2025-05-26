@@ -330,6 +330,11 @@ class Processor(Generic[InputType, OutputType]):
                 logger.info(f"Log fetching is already running for {processor_name}.")
 
         # Attempt to parse into OutputType if conditions are met
+        print(f">>> wait: {wait}")
+        print(f">>> self.schema_: {self.schema_}")
+        print(">>> type(self.schema_): ", type(self.schema_))
+        print(f">>> isinstance(self.schema_, type): {isinstance(self.schema_, type)}")
+        print(f">>> isinstance(raw_content, dict): {isinstance(raw_content, dict)}")
         if (
             wait
             and self.schema_
@@ -337,16 +342,20 @@ class Processor(Generic[InputType, OutputType]):
             and issubclass(self.schema_, BaseModel)  # type: ignore
             and isinstance(raw_content, dict)
         ):  # Check if raw_content is a dict
+            print(f">>> raw_content: {raw_content}")
             try:
                 # self.schema_ is assumed to be the Pydantic model class for OutputType
                 # Parse raw_content instead of the full response
                 parsed_model = self.schema_.model_validate(raw_content)
+                print(f">>> parsed_model: {parsed_model}")
                 # Cast to OutputType to satisfy the linter with generics
                 parsed_output: OutputType = cast(OutputType, parsed_model)
+                print(f">>> parsed_output: {parsed_output}")
                 return parsed_output
             except (
                 Exception
             ) as e:  # Consider pydantic.ValidationError for more specific handling
+                print(f">>> error: {e}")
                 schema_name = getattr(self.schema_, "__name__", str(self.schema_))
                 logger.error(
                     f"Processor {processor_name}: Failed to parse 'content' field into output type {schema_name}. "
