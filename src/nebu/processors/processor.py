@@ -534,6 +534,7 @@ class Processor(Generic[InputType, OutputType]):
                     wait=True,
                     timeout=30.0,  # Short timeout for individual health check
                 )
+                logger.info(f">>> Health check response: {response}")
 
                 # Check if the response indicates health
                 if response and isinstance(response, dict):
@@ -545,12 +546,12 @@ class Processor(Generic[InputType, OutputType]):
                         )
                         return
 
-                logger.debug(
+                logger.info(
                     f"Health check attempt failed, retrying in {retry_interval}s..."
                 )
 
             except Exception as e:
-                logger.debug(
+                logger.info(
                     f"Health check failed with error: {e}, retrying in {retry_interval}s..."
                 )
 
