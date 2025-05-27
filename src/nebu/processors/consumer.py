@@ -388,7 +388,13 @@ def start_health_check_subprocess() -> Optional[subprocess.Popen]:
     """Start the health check consumer subprocess."""
     global REDIS_HEALTH_STREAM, REDIS_HEALTH_CONSUMER_GROUP
 
+    print(f"[DEBUG] start_health_check_subprocess called")
+    print(f"[DEBUG] REDIS_URL: {REDIS_URL}")
+    print(f"[DEBUG] REDIS_HEALTH_STREAM: {REDIS_HEALTH_STREAM}")
+    print(f"[DEBUG] REDIS_HEALTH_CONSUMER_GROUP: {REDIS_HEALTH_CONSUMER_GROUP}")
+
     if not all([REDIS_URL, REDIS_HEALTH_STREAM, REDIS_HEALTH_CONSUMER_GROUP]):
+        print(f"[DEBUG] Health check not configured - missing required variables")
         logger.warning(
             "[Consumer] Health check stream not configured. Health consumer subprocess not started."
         )
@@ -398,6 +404,11 @@ def start_health_check_subprocess() -> Optional[subprocess.Popen]:
         # Type assertions to ensure variables are strings before using them
         assert isinstance(REDIS_HEALTH_STREAM, str)
         assert isinstance(REDIS_HEALTH_CONSUMER_GROUP, str)
+
+        print(
+            f"[DEBUG] Starting health check subprocess for stream: {REDIS_HEALTH_STREAM}"
+        )
+        print(f"[DEBUG] Health consumer group: {REDIS_HEALTH_CONSUMER_GROUP}")
 
         # Prepare environment variables for the subprocess
         health_env = os.environ.copy()
@@ -412,6 +423,8 @@ def start_health_check_subprocess() -> Optional[subprocess.Popen]:
             "nebu.processors.consumer_health_worker",
         ]
 
+        print(f"[DEBUG] Health subprocess command: {' '.join(health_cmd)}")
+
         process = subprocess.Popen(
             health_cmd,
             stdout=subprocess.PIPE,
@@ -422,12 +435,17 @@ def start_health_check_subprocess() -> Optional[subprocess.Popen]:
             bufsize=1,  # Line buffered
         )
 
+        print(
+            f"[DEBUG] Health check subprocess started successfully with PID {process.pid}"
+        )
         logger.info(
             f"[Consumer] Health check subprocess started with PID {process.pid}"
         )
         return process
 
     except Exception as e:
+        print(f"[DEBUG] Failed to start health check subprocess: {e}")
+        print(f"[DEBUG] Exception type: {type(e)}")
         logger.error(f"[Consumer] Failed to start health check subprocess: {e}")
         logger.exception("Health Subprocess Start Error Traceback:")
         return None
@@ -435,13 +453,17 @@ def start_health_check_subprocess() -> Optional[subprocess.Popen]:
 
 def monitor_health_subprocess(process: subprocess.Popen) -> None:
     """Monitor the health check subprocess and log its output."""
+    print(f"[DEBUG] monitor_health_subprocess started for PID {process.pid}")
     try:
         # Read output from the subprocess
         if process.stdout:
             for line in iter(process.stdout.readline, ""):
+                print(f"[DEBUG] [HealthSubprocess] {line.strip()}")
                 logger.info(f"[HealthSubprocess] {line.strip()}")
         process.stdout.close() if process.stdout else None
+        print(f"[DEBUG] monitor_health_subprocess finished for PID {process.pid}")
     except Exception as e:
+        print(f"[DEBUG] Error monitoring health subprocess: {e}")
         logger.error(f"[Consumer] Error monitoring health subprocess: {e}")
 
 
@@ -449,33 +471,45 @@ def check_health_subprocess() -> bool:
     """Check if the health subprocess is still running and restart if needed."""
     global health_subprocess
 
+    print(f"[DEBUG] check_health_subprocess called")
+
     if health_subprocess is None:
+        print(f"[DEBUG] health_subprocess is None")
         return False
 
     # Check if process is still running
-    if health_subprocess.poll() is None:
+    poll_result = health_subprocess.poll()
+    print(f"[DEBUG] health_subprocess.poll() returned: {poll_result}")
+
+    if poll_result is None:
+        print(f"[DEBUG] Health subprocess still running (PID {health_subprocess.pid})")
         return True  # Still running
 
     # Process has exited
     exit_code = health_subprocess.returncode
+    print(f"[DEBUG] Health subprocess exited with code {exit_code}")
     logger.warning(
         f"[Consumer] Health subprocess exited with code {exit_code}. Restarting..."
     )
 
     # Start a new health subprocess
+    print(f"[DEBUG] Attempting to restart health subprocess...")
     health_subprocess = start_health_check_subprocess()
 
     if health_subprocess:
+        print(f"[DEBUG] Health subprocess restarted successfully")
         # Start monitoring thread for the new subprocess
         monitor_thread = threading.Thread(
             target=monitor_health_subprocess, args=(health_subprocess,), daemon=True
         )
         monitor_thread.start()
+        print(f"[DEBUG] Monitor thread started for health subprocess")
         logger.info(
             "[Consumer] Health subprocess restarted and monitoring thread started."
         )
         return True
     else:
+        print(f"[DEBUG] Failed to restart health subprocess")
         logger.error("[Consumer] Failed to restart health subprocess.")
         return False
 
@@ -714,6 +748,9 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
     user_id = None
     try:
         payload_str = message_data.get("data")
+        print(f"[DEBUG] Raw message_data: {message_data}")
+        print(f"[DEBUG] Payload string: {payload_str}")
+
         if (
             not payload_str
         ):  # Covers None and empty string, isinstance check is redundant
@@ -722,6 +759,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             )
         try:
             raw_payload = json.loads(payload_str)
+            print(f"[DEBUG] Parsed raw_payload: {json.dumps(raw_payload, indent=2)}")
         except json.JSONDecodeError as json_err:
             raise ValueError(f"Failed to parse JSON payload: {json_err}") from json_err
         if not isinstance(raw_payload, dict):
@@ -734,6 +772,9 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         # --- Extract fields from the *inner* message content for HealthCheck and regular processing ---
         # The actual message content is inside raw_payload["content"]
         inner_content_data = raw_payload.get("content", {})
+        print(
+            f"[DEBUG] Extracted inner_content_data: {json.dumps(inner_content_data, indent=2) if isinstance(inner_content_data, dict) else inner_content_data}"
+        )
 
         # Add debug logging for content structure analysis
         logger.debug(f">> inner_content_data type: {type(inner_content_data)}")
@@ -746,6 +787,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             # we can't reliably get 'kind' or other fields from it.
             # This case is more relevant for non-StreamMessage processors.
             # For HealthChecks, we expect a structured 'content'.
+            print(f"[DEBUG] inner_content_data is not a dict, using defaults")
             logger.warning(
                 f"Received non-dict inner_content_data: {inner_content_data}. HealthCheck might be missed if applicable."
             )
@@ -762,6 +804,8 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 and "content" in inner_content_data
             )
 
+            print(f"[DEBUG] has_message_structure: {has_message_structure}")
+            print(f"[DEBUG] inner_content_data keys: {list(inner_content_data.keys())}")
             logger.debug(f">> has_message_structure: {has_message_structure}")
 
             if has_message_structure:
@@ -770,6 +814,13 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 inner_msg_id = inner_content_data.get("id", "")
                 actual_content_to_process = inner_content_data.get("content", {})
                 inner_created_at_str = inner_content_data.get("created_at")
+                print(f"[DEBUG] Using nested structure:")
+                print(f"[DEBUG]   inner_kind: '{inner_kind}'")
+                print(f"[DEBUG]   inner_msg_id: '{inner_msg_id}'")
+                print(
+                    f"[DEBUG]   actual_content_to_process: {actual_content_to_process}"
+                )
+                print(f"[DEBUG]   inner_created_at_str: {inner_created_at_str}")
                 logger.debug(
                     f">> Using nested structure - inner_kind: {inner_kind}, inner_msg_id: {inner_msg_id}"
                 )
@@ -786,6 +837,13 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 inner_created_at_str = raw_payload.get(
                     "created_at"
                 )  # Get created_at from outer payload
+                print(f"[DEBUG] Using direct structure:")
+                print(f"[DEBUG]   inner_kind: '{inner_kind}' (from outer payload)")
+                print(f"[DEBUG]   inner_msg_id: '{inner_msg_id}' (from outer payload)")
+                print(
+                    f"[DEBUG]   actual_content_to_process: {actual_content_to_process}"
+                )
+                print(f"[DEBUG]   inner_created_at_str: {inner_created_at_str}")
                 logger.debug(
                     f">> Using direct structure - inner_kind: {inner_kind}, inner_msg_id: {inner_msg_id}"
                 )
@@ -810,31 +868,117 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         handle = raw_payload.get("handle")  # from outer
         adapter = raw_payload.get("adapter")  # from outer
         api_key = raw_payload.get("api_key")  # from outer
+
+        print(f"[DEBUG] Extracted outer envelope data:")
+        print(f"[DEBUG]   return_stream: {return_stream}")
+        print(f"[DEBUG]   user_id: {user_id}")
+        print(f"[DEBUG]   orgs: {orgs}")
+        print(f"[DEBUG]   handle: {handle}")
+        print(f"[DEBUG]   adapter: {adapter}")
+        print(f"[DEBUG]   api_key length: {len(api_key) if api_key else 0}")
+
         logger.debug(f">> Extracted API key length: {len(api_key) if api_key else 0}")
 
         # --- Health Check Logic ---
         # Use inner_kind for health check
-        if inner_kind == "HealthCheck":
-            logger.info(
-                f"Received HealthCheck message {message_id} (inner_id: {inner_msg_id})"
-            )
-            health_response = {
-                "kind": "StreamResponseMessage",
-                "id": message_id,  # Use outer message_id for response ID
-                "content": {"status": "healthy", "checked_message_id": inner_msg_id},
-                "status": "success",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "user_id": user_id,
-            }
-            if return_stream:
-                assert isinstance(return_stream, str)
-                r.xadd(return_stream, {"data": json.dumps(health_response)})
-                logger.info(f"Sent health check response to {return_stream}")
+        print(f"[DEBUG] Checking if message is HealthCheck. inner_kind: '{inner_kind}'")
+        print(
+            f"[DEBUG] Message kind comparison: '{inner_kind}' == 'HealthCheckRequest' -> {inner_kind == 'HealthCheckRequest'}"
+        )
 
-            assert isinstance(REDIS_STREAM, str)
-            assert isinstance(REDIS_CONSUMER_GROUP, str)
-            r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
-            logger.info(f"Acknowledged HealthCheck message {message_id}")
+        if inner_kind == "HealthCheckRequest":
+            print(f"[DEBUG] *** HEALTH CHECK REQUEST MESSAGE DETECTED ***")
+            print(f"[DEBUG] Message ID: {message_id}")
+            print(f"[DEBUG] Inner message ID: {inner_msg_id}")
+            print(f"[DEBUG] Return stream: {return_stream}")
+            print(f"[DEBUG] User ID: {user_id}")
+            print(f"[DEBUG] Content: {actual_content_to_process}")
+
+            logger.info(
+                f"Received HealthCheckRequest message {message_id} (inner_id: {inner_msg_id})"
+            )
+
+            # Forward to health stream for health worker subprocess to process
+            if REDIS_HEALTH_STREAM:
+                print(
+                    f"[DEBUG] Forwarding health check to health stream: {REDIS_HEALTH_STREAM}"
+                )
+                try:
+                    # Forward the entire message data to the health stream
+                    health_message_data = {
+                        "data": json.dumps(
+                            {
+                                "kind": inner_kind,
+                                "id": inner_msg_id,
+                                "content": actual_content_to_process,
+                                "created_at": inner_created_at.isoformat(),
+                                "return_stream": return_stream,
+                                "user_id": user_id,
+                                "orgs": orgs,
+                                "handle": handle,
+                                "adapter": adapter,
+                                "api_key": api_key,
+                                "original_message_id": message_id,  # Include original message ID for tracking
+                            }
+                        )
+                    }
+
+                    print(
+                        f"[DEBUG] Health message data to forward: {json.dumps(health_message_data, indent=2)}"
+                    )
+
+                    r.xadd(REDIS_HEALTH_STREAM, health_message_data)  # type: ignore[arg-type]
+                    print(
+                        f"[DEBUG] Health check forwarded successfully to {REDIS_HEALTH_STREAM}"
+                    )
+                    logger.info(
+                        f"Forwarded HealthCheckRequest {message_id} to health stream {REDIS_HEALTH_STREAM}"
+                    )
+
+                except Exception as e:
+                    print(
+                        f"[DEBUG] ERROR forwarding health check to health stream: {e}"
+                    )
+                    logger.error(f"Error forwarding health check to health stream: {e}")
+                    # Fall back to sending error response directly
+                    _send_error_response(
+                        message_id,
+                        f"Failed to forward health check: {e}",
+                        traceback.format_exc(),
+                        return_stream,
+                        user_id,
+                    )
+            else:
+                print(
+                    f"[DEBUG] No health stream configured, cannot forward health check"
+                )
+                logger.warning(
+                    "No health stream configured for health check forwarding"
+                )
+                # Send error response since we can't process health checks
+                _send_error_response(
+                    message_id,
+                    "Health check stream not configured",
+                    "REDIS_HEALTH_STREAM environment variable not set",
+                    return_stream,
+                    user_id,
+                )
+
+            # Acknowledge the original message since we've forwarded it
+            print(f"[DEBUG] Acknowledging original health check message {message_id}")
+            try:
+                assert isinstance(REDIS_STREAM, str)
+                assert isinstance(REDIS_CONSUMER_GROUP, str)
+                r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
+                print(
+                    f"[DEBUG] Health check message {message_id} acknowledged successfully"
+                )
+                logger.info(f"Acknowledged HealthCheckRequest message {message_id}")
+            except Exception as e:
+                print(f"[DEBUG] ERROR acknowledging health check message: {e}")
+                logger.error(f"Error acknowledging health check message: {e}")
+
+            print(f"[DEBUG] *** HEALTH CHECK FORWARDING COMPLETE ***")
             return  # Exit early for health checks
         # --- End Health Check Logic ---
 
@@ -1210,19 +1354,31 @@ logger.info(
 
 # Start the health check consumer subprocess
 if REDIS_HEALTH_STREAM and REDIS_HEALTH_CONSUMER_GROUP:
+    print(f"[DEBUG] === HEALTH SUBPROCESS INITIALIZATION ===")
+    print(f"[DEBUG] REDIS_HEALTH_STREAM is set: {REDIS_HEALTH_STREAM}")
+    print(f"[DEBUG] REDIS_HEALTH_CONSUMER_GROUP is set: {REDIS_HEALTH_CONSUMER_GROUP}")
+
     health_subprocess = start_health_check_subprocess()
     if health_subprocess:
+        print(
+            f"[DEBUG] Health subprocess started successfully, starting monitor thread..."
+        )
         # Start monitoring thread for subprocess output
         monitor_thread = threading.Thread(
             target=monitor_health_subprocess, args=(health_subprocess,), daemon=True
         )
         monitor_thread.start()
+        print(f"[DEBUG] Monitor thread started for health subprocess")
         logger.info(
             f"[Consumer] Health check subprocess for {REDIS_HEALTH_STREAM} started and monitoring thread started."
         )
     else:
+        print(f"[DEBUG] Health subprocess failed to start")
         logger.error("[Consumer] Failed to start health check subprocess.")
 else:
+    print(f"[DEBUG] === HEALTH SUBPROCESS NOT CONFIGURED ===")
+    print(f"[DEBUG] REDIS_HEALTH_STREAM: {REDIS_HEALTH_STREAM}")
+    print(f"[DEBUG] REDIS_HEALTH_CONSUMER_GROUP: {REDIS_HEALTH_CONSUMER_GROUP}")
     logger.warning(
         "[Consumer] Health check stream not configured. Health consumer subprocess not started."
     )
@@ -1232,10 +1388,15 @@ try:
         logger.debug(
             f"[{datetime.now(timezone.utc).isoformat()}] --- Top of main loop ---"
         )  # Added log
+        print(f"[DEBUG] === MAIN LOOP ITERATION START ===")
 
         # --- Check Health Subprocess Status ---
         if health_subprocess:
-            check_health_subprocess()
+            print(f"[DEBUG] Checking health subprocess status...")
+            health_status = check_health_subprocess()
+            print(f"[DEBUG] Health subprocess status check result: {health_status}")
+        else:
+            print(f"[DEBUG] No health subprocess to check")
 
         # --- Check for Code Updates ---
         if not disable_hot_reload:
@@ -1448,6 +1609,11 @@ try:
         logger.debug(
             f"[{datetime.now(timezone.utc).isoformat()}] Calling xreadgroup (block=5000ms)..."
         )  # Added log
+        print(f"[DEBUG] About to call xreadgroup...")
+        print(f"[DEBUG] Stream: {REDIS_STREAM}")
+        print(f"[DEBUG] Consumer group: {REDIS_CONSUMER_GROUP}")
+        print(f"[DEBUG] Consumer name: {consumer_name}")
+
         messages = r.xreadgroup(
             REDIS_CONSUMER_GROUP,
             consumer_name,
@@ -1456,10 +1622,14 @@ try:
             block=5000,  # Use milliseconds for block
         )
 
+        print(f"[DEBUG] xreadgroup returned: {messages}")
+        print(f"[DEBUG] Messages type: {type(messages)}")
+
         if not messages:
             logger.trace(
                 f"[{datetime.now(timezone.utc).isoformat()}] xreadgroup timed out (no new messages)."
             )  # Added log
+            print(f"[DEBUG] No messages received (timeout or empty)")
             # logger.debug("[Consumer] No new messages.") # Reduce verbosity
             continue
         # Removed the else block here
@@ -1474,6 +1644,8 @@ try:
         )
         stream_name_str, stream_messages = typed_messages[0]
         num_msgs = len(stream_messages)
+
+        print(f"[DEBUG] Processing {num_msgs} message(s) from stream {stream_name_str}")
 
         # Log reception and count before processing
         logger.info(
@@ -1492,7 +1664,12 @@ try:
             #                          for k, v in msg_data_bytes_dict.items() } # No longer needed
             # print(f"Processing message {message_id_str}") # Reduce verbosity
             # print(f"Message data: {message_data_str_dict}") # Reduce verbosity
+            print(f"[DEBUG] === PROCESSING MESSAGE {message_id_str} ===")
+            print(f"[DEBUG] Message data keys: {list(message_data_str_dict.keys())}")
+
             process_message(message_id_str, message_data_str_dict)
+
+            print(f"[DEBUG] === FINISHED PROCESSING MESSAGE {message_id_str} ===")
 
 except ConnectionError as e:
     logger.error(f"Redis connection error: {e}. Reconnecting in 5s...")
