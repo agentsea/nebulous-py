@@ -283,6 +283,7 @@ class Processor(Generic[InputType, OutputType]):
         """
         Send data to the processor and optionally stream logs in the background.
         """
+        print("sending data to processor: ", data)
         if (
             not self.processor
             or not self.processor.metadata.name
@@ -314,14 +315,14 @@ class Processor(Generic[InputType, OutputType]):
         response.raise_for_status()
         raw_response_json = response.json()
 
+        print(f">>> Raw response JSON: {raw_response_json}")
+
         if "error" in raw_response_json:
+            print("error in raw_response_json")
             raise Exception(raw_response_json["error"])
 
-        if "status" in raw_response_json:
-            return raw_response_json
-
         raw_content = raw_response_json.get("content")
-        logger.debug(f">>> Raw content: {raw_content}")
+        print(f">>> Raw content: {raw_content}")
 
         # --- Fetch Logs (if requested and not already running) ---
         if logs:

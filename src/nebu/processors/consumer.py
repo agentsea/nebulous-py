@@ -478,28 +478,28 @@ def check_health_subprocess() -> bool:
         return False
 
     # Cat the health subprocess log file
-    try:
-        log_dir = os.path.join(os.getcwd(), "logs")
-        log_file = os.path.join(log_dir, f"health_consumer_{health_subprocess.pid}.log")
+    # try:
+    #     log_dir = os.path.join(os.getcwd(), "logs")
+    #     log_file = os.path.join(log_dir, f"health_consumer_{health_subprocess.pid}.log")
 
-        if os.path.exists(log_file):
-            print(
-                f"[DEBUG] === HEALTH SUBPROCESS LOG (PID {health_subprocess.pid}) ==="
-            )
-            try:
-                with open(log_file, "r") as f:
-                    log_contents = f.read()
-                    if log_contents.strip():
-                        print(log_contents)
-                    else:
-                        print("[DEBUG] Log file is empty")
-            except Exception as e:
-                print(f"[DEBUG] Error reading log file {log_file}: {e}")
-            print(f"[DEBUG] === END HEALTH SUBPROCESS LOG ===")
-        else:
-            print(f"[DEBUG] Health subprocess log file not found: {log_file}")
-    except Exception as e:
-        print(f"[DEBUG] Error accessing health subprocess log: {e}")
+    #     if os.path.exists(log_file):
+    #         print(
+    #             f"[DEBUG] === HEALTH SUBPROCESS LOG (PID {health_subprocess.pid}) ==="
+    #         )
+    #         try:
+    #             with open(log_file, "r") as f:
+    #                 log_contents = f.read()
+    #                 if log_contents.strip():
+    #                     print(log_contents)
+    #                 else:
+    #                     print("[DEBUG] Log file is empty")
+    #         except Exception as e:
+    #             print(f"[DEBUG] Error reading log file {log_file}: {e}")
+    #         print(f"[DEBUG] === END HEALTH SUBPROCESS LOG ===")
+    #     else:
+    #         print(f"[DEBUG] Health subprocess log file not found: {log_file}")
+    # except Exception as e:
+    #     print(f"[DEBUG] Error accessing health subprocess log: {e}")
 
     # Check if process is still running
     poll_result = health_subprocess.poll()
