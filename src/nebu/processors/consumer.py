@@ -471,10 +471,10 @@ def check_health_subprocess() -> bool:
     """Check if the health subprocess is still running and restart if needed."""
     global health_subprocess
 
-    print(f"[DEBUG] check_health_subprocess called")
+    # print(f"[DEBUG] check_health_subprocess called")
 
     if health_subprocess is None:
-        print(f"[DEBUG] health_subprocess is None")
+        # print(f"[DEBUG] health_subprocess is None")
         return False
 
     # Cat the health subprocess log file
@@ -503,7 +503,7 @@ def check_health_subprocess() -> bool:
 
     # Check if process is still running
     poll_result = health_subprocess.poll()
-    print(f"[DEBUG] health_subprocess.poll() returned: {poll_result}")
+    # print(f"[DEBUG] health_subprocess.poll() returned: {poll_result}")
 
     if poll_result is None:
         print(f"[DEBUG] Health subprocess still running (PID {health_subprocess.pid})")
@@ -511,29 +511,29 @@ def check_health_subprocess() -> bool:
 
     # Process has exited
     exit_code = health_subprocess.returncode
-    print(f"[DEBUG] Health subprocess exited with code {exit_code}")
+    # print(f"[DEBUG] Health subprocess exited with code {exit_code}")
     logger.warning(
         f"[Consumer] Health subprocess exited with code {exit_code}. Restarting..."
     )
 
     # Start a new health subprocess
-    print(f"[DEBUG] Attempting to restart health subprocess...")
+    # print(f"[DEBUG] Attempting to restart health subprocess...")
     health_subprocess = start_health_check_subprocess()
 
     if health_subprocess:
-        print(f"[DEBUG] Health subprocess restarted successfully")
+        # print(f"[DEBUG] Health subprocess restarted successfully")
         # Start monitoring thread for the new subprocess
         monitor_thread = threading.Thread(
             target=monitor_health_subprocess, args=(health_subprocess,), daemon=True
         )
         monitor_thread.start()
-        print(f"[DEBUG] Monitor thread started for health subprocess")
+        # print(f"[DEBUG] Monitor thread started for health subprocess")
         logger.info(
             "[Consumer] Health subprocess restarted and monitoring thread started."
         )
         return True
     else:
-        print(f"[DEBUG] Failed to restart health subprocess")
+        # print(f"[DEBUG] Failed to restart health subprocess")
         logger.error("[Consumer] Failed to restart health subprocess.")
         return False
 
