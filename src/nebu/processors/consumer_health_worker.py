@@ -31,9 +31,7 @@ def setup_health_logging():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
             logging.FileHandler(log_file),
-            logging.StreamHandler(
-                sys.stdout
-            ),  # Also log to stdout for subprocess monitoring
+            # Removed StreamHandler to prevent health logs from appearing in main logs
         ],
     )
 
