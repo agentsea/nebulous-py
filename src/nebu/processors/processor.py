@@ -257,7 +257,7 @@ class Processor(Generic[InputType, OutputType]):
         logs: bool = False,
         api_key: Optional[str] = None,
         user_key: Optional[str] = None,
-        timeout: Optional[float] = 600.0,
+        timeout: Optional[float] = 3600,
     ) -> OutputType | Dict[str, Any] | None:
         """
         Allows the Processor instance to be called like a function, sending data.
@@ -278,7 +278,7 @@ class Processor(Generic[InputType, OutputType]):
         logs: bool = False,
         api_key: Optional[str] = None,
         user_key: Optional[str] = None,
-        timeout: Optional[float] = 600.0,
+        timeout: Optional[float] = 3600,
     ) -> OutputType | Dict[str, Any] | None:
         """
         Send data to the processor and optionally stream logs in the background.
