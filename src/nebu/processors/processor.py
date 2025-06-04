@@ -363,19 +363,31 @@ class Processor(Generic[InputType, OutputType]):
         # Poll only if poll=True AND the initial request was configured not to wait (wait=False).
         if poll and not stream_data_wait_param:
             message_id = raw_response_json.get("message_id")
+            return_stream = raw_response_json.get("return_stream")
+
             if not message_id or not isinstance(message_id, str):
                 logger.error(
-                    f"Processor {processor_name}: Polling requested but 'message_id' (string) not found in initial response. Response: {raw_response_json}"
+                    f"Processor {processor_name}: Polling requested but 'message_id' (string) not found or invalid in initial response. Response: {raw_response_json}"
                 )
                 raise ValueError(
                     "Polling failed: 'message_id' (string) missing or invalid in initial server response."
+                )
+            if not return_stream or not isinstance(return_stream, str):
+                logger.error(
+                    f"Processor {processor_name}: Polling requested but 'return_stream' (string) not found or invalid in initial response. Response: {raw_response_json}"
+                )
+                raise ValueError(
+                    "Polling failed: 'return_stream' (string) missing or invalid in initial server response for polling."
                 )
 
             # Polling URL using self.orign_host for consistency
             polling_url = f"{self.orign_host}/v1/processors/{processor_namespace}/{processor_name}/return/{message_id}"
 
+            # Prepare polling payload
+            poll_payload = {"consumer_group": return_stream}
+
             logger.info(
-                f"Processor {processor_name}: Polling for message_id {message_id} at {polling_url}. Overall timeout: {timeout}s, Interval: {poll_interval_seconds}s."
+                f"Processor {processor_name}: Polling for message_id {message_id} at {polling_url} with payload {poll_payload}. Overall timeout: {timeout}s, Interval: {poll_interval_seconds}s."
             )
             polling_start_time = time.time()
 
@@ -401,7 +413,7 @@ class Processor(Generic[InputType, OutputType]):
                         polling_url,
                         headers={"Authorization": f"Bearer {current_op_api_key}"},
                         timeout=individual_poll_timeout,
-                        json={},  # Send an empty JSON body for POST
+                        json=poll_payload,
                     )
 
                     if poll_response.status_code == 200:
@@ -427,11 +439,11 @@ class Processor(Generic[InputType, OutputType]):
                         break  # Exit polling loop
 
                     elif poll_response.status_code == 404:
-                        print(
+                        logger.debug(
                             f"Processor {processor_name}: Message {message_id} not yet ready (404). Retrying in {poll_interval_seconds}s..."
                         )
                     elif poll_response.status_code == 202:
-                        print(
+                        logger.debug(
                             f"Processor {processor_name}: Message {message_id} processing (202). Retrying in {poll_interval_seconds}s..."
                         )
                     else:
