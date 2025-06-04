@@ -227,7 +227,7 @@ def extract_definition_source_from_string(
                 )
                 return last_found_source  # Found last definition, return immediately
 
-        except (SyntaxError, ValueError) as e:
+        except (SyntaxError, ValueError):
             # logger.debug(f"extract: Skipping cell #{cell_num} due to parse error: {e}") # Can be verbose
             continue
         except Exception as e:

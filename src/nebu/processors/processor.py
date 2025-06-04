@@ -405,7 +405,7 @@ class Processor(Generic[InputType, OutputType]):
                     )
 
                 individual_poll_timeout = max(10.0, poll_interval_seconds * 2)
-                logger.debug(
+                logger.info(
                     f"Processor {processor_name}: Making polling attempt for {message_id}, attempt timeout: {individual_poll_timeout}s"
                 )
                 try:
@@ -453,11 +453,11 @@ class Processor(Generic[InputType, OutputType]):
                         break  # Exit polling loop
 
                     elif poll_response.status_code == 404:
-                        logger.debug(
+                        logger.info(
                             f"Processor {processor_name}: Message {message_id} not yet ready (404). Retrying in {poll_interval_seconds}s..."
                         )
                     elif poll_response.status_code == 202:
-                        logger.debug(
+                        logger.info(
                             f"Processor {processor_name}: Message {message_id} processing (202). Retrying in {poll_interval_seconds}s..."
                         )
                     else:
