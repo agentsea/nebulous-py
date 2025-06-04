@@ -259,6 +259,8 @@ class Processor(Generic[InputType, OutputType]):
         api_key: Optional[str] = None,
         user_key: Optional[str] = None,
         timeout: Optional[float] = 3600,
+        poll: bool = False,
+        poll_interval_seconds: float = 2.0,
     ) -> OutputType | Dict[str, Any] | None:
         """
         Allows the Processor instance to be called like a function, sending data.
@@ -270,6 +272,8 @@ class Processor(Generic[InputType, OutputType]):
             api_key=api_key,
             user_key=user_key,
             timeout=timeout,
+            poll=poll,
+            poll_interval_seconds=poll_interval_seconds,
         )
 
     def send(
