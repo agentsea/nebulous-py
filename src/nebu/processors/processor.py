@@ -421,14 +421,28 @@ class Processor(Generic[InputType, OutputType]):
                             f"Processor {processor_name}: Successfully retrieved message {message_id} via polling. Status: 200."
                         )
                         try:
-                            polled_data = poll_response.json()
-                            if isinstance(polled_data, (dict, list, str)):
-                                raw_content = polled_data
-                            else:
-                                logger.warning(
-                                    f"Processor {processor_name}: Polled data for {message_id} is of unexpected type: {type(polled_data)}. Content: {polled_data}"
+                            polled_data_full = poll_response.json()
+                            if (
+                                isinstance(polled_data_full, dict)
+                                and "content" in polled_data_full
+                            ):
+                                # Extract the nested content for Pydantic validation
+                                raw_content = polled_data_full.get("content")
+                                logger.debug(
+                                    f"Processor {processor_name}: Extracted nested 'content' from polled data for {message_id}. Nested content: {str(raw_content)[:200]}..."
                                 )
-                                raw_content = polled_data
+                            elif isinstance(polled_data_full, (dict, list, str)):
+                                # Fallback: use the full polled data if 'content' key is not present in a dict, or if it's not a dict itself.
+                                raw_content = polled_data_full
+                                logger.warning(
+                                    f"Processor {processor_name}: Polled data for {message_id} did not contain a 'content' key as expected, or was not a dict. Using full polled data. Type: {type(polled_data_full)}. Data: {str(polled_data_full)[:200]}..."
+                                )
+                            else:
+                                # Unexpected type for polled_data_full
+                                raw_content = polled_data_full
+                                logger.warning(
+                                    f"Processor {processor_name}: Polled data for {message_id} is of an unexpected type: {type(polled_data_full)}. Content: {str(polled_data_full)[:200]}..."
+                                )
                         except json.JSONDecodeError:
                             logger.error(
                                 f"Processor {processor_name}: Failed to decode JSON from polling response for {message_id}. Response text: {poll_response.text[:200]}..."
