@@ -427,11 +427,11 @@ class Processor(Generic[InputType, OutputType]):
                         break  # Exit polling loop
 
                     elif poll_response.status_code == 404:
-                        logger.debug(
+                        print(
                             f"Processor {processor_name}: Message {message_id} not yet ready (404). Retrying in {poll_interval_seconds}s..."
                         )
                     elif poll_response.status_code == 202:
-                        logger.debug(
+                        print(
                             f"Processor {processor_name}: Message {message_id} processing (202). Retrying in {poll_interval_seconds}s..."
                         )
                     else:
