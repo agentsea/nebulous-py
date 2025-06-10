@@ -897,6 +897,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         print(f"[DEBUG]   return_stream: {return_stream}")
         print(f"[DEBUG]   user_id: {user_id}")
         print(f"[DEBUG]   orgs: {orgs}")
+        print(f"[DEBUG]   got orgs as orgs: {orgs}")
         print(f"[DEBUG]   handle: {handle}")
         print(f"[DEBUG]   adapter: {adapter}")
         print(f"[DEBUG]   api_key length: {len(api_key) if api_key else 0}")
