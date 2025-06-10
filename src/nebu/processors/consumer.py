@@ -888,7 +888,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         # These are from the outer envelope, might be useful for routing/meta
         return_stream = raw_payload.get("return_stream")
         user_id = raw_payload.get("user_id")
-        orgs = raw_payload.get("organizations")  # from outer
+        orgs = raw_payload.get("orgs")  # from outer
         handle = raw_payload.get("handle")  # from outer
         adapter = raw_payload.get("adapter")  # from outer
         api_key = raw_payload.get("api_key")  # from outer
