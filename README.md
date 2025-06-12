@@ -5,7 +5,7 @@ A declarative python library for the [Nebulous runtime](https://github.com/agent
 ## Installation
 
 ```bash
-pip install nebu
+pip install nebulous-py
 ```
 
 ## Usage
@@ -13,7 +13,7 @@ pip install nebu
 Create a pytorch container on runpod with 1 A100 GPU
 
 ```python
-from nebu import Container, V1EnvVar
+from nebulous import Container, V1EnvVar
 
 container = Container(
     name="pytorch-example",
@@ -35,18 +35,24 @@ print(f"Container '{container.metadata.name}' is running")
 print(f"You can access the container at {container.status.tailnet_url}")
 ```
 
-### Decorator
+### Processors
 
-Run a python function in a container [in progress]
+Run a python function as a stream processor.
 
 ```python
-from nebu import container
+from nebulous import Message, processor
+from pydantic import BaseModel
 
-@container(image="python:3.10-slim", accelerators=["1:A100_SXM"])
-def my_function(x: int, y: int) -> int:
-    return x + y
+class MyInput(BaseModel):
+    a: str
+    b: int
 
-result = my_function(1, 2)
+@processor(image="python:3.10-slim", accelerators=["1:A100_SXM"])
+def my_function(msg: Message[MyInput]):
+    return msg
+
+msg = MyInput(a="foo", b=1)
+result = my_function(msg)
 print(result)
 ```
 

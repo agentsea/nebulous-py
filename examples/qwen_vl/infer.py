@@ -1,8 +1,8 @@
 from peft import PeftModel
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
-from nebu import Adapter, Message, processor
-from nebu.chatx.openai import (
+from nebulous import Adapter, Message, processor
+from nebulous.chatx.openai import (
     ChatCompletionChoice,
     ChatCompletionRequest,
     ChatCompletionRequestMessageContentPartImage,
@@ -26,7 +26,7 @@ def init():
     from dataclasses import dataclass
     from typing import Dict, Optional
 
-    from nebu import Cache
+    from nebulous import Cache
 
     @dataclass
     class InferenceState:
@@ -81,7 +81,7 @@ def infer_qwen_vl(
 
     from qwen_vl_utils import process_vision_info
 
-    from nebu import (
+    from nebulous import (
         Adapter,
         Bucket,
         is_allowed,

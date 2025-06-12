@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import asyncio
 import importlib
 import json
 import os
@@ -16,8 +17,8 @@ import redis
 import socks
 from redis import ConnectionError, ResponseError
 
-from nebu.errors import RetriableError
-from nebu.logging import logger
+from nebulous.errors import RetriableError
+from nebulous.logging import logger
 
 # Define TypeVar for generic models
 T = TypeVar("T")
@@ -214,6 +215,7 @@ logger.debug("=================================")
 try:
     # Core function info
     _function_name = os.environ.get("FUNCTION_NAME")
+    is_async_function = os.environ.get("IS_ASYNC_FUNCTION") == "True"
     _entrypoint_rel_path = os.environ.get("NEBU_ENTRYPOINT_MODULE_PATH")
 
     # Type info
@@ -388,13 +390,13 @@ def start_health_check_subprocess() -> Optional[subprocess.Popen]:
     """Start the health check consumer subprocess."""
     global REDIS_HEALTH_STREAM, REDIS_HEALTH_CONSUMER_GROUP
 
-    print(f"[DEBUG] start_health_check_subprocess called")
+    print("[DEBUG] start_health_check_subprocess called")
     print(f"[DEBUG] REDIS_URL: {REDIS_URL}")
     print(f"[DEBUG] REDIS_HEALTH_STREAM: {REDIS_HEALTH_STREAM}")
     print(f"[DEBUG] REDIS_HEALTH_CONSUMER_GROUP: {REDIS_HEALTH_CONSUMER_GROUP}")
 
     if not all([REDIS_URL, REDIS_HEALTH_STREAM, REDIS_HEALTH_CONSUMER_GROUP]):
-        print(f"[DEBUG] Health check not configured - missing required variables")
+        print("[DEBUG] Health check not configured - missing required variables")
         logger.warning(
             "[Consumer] Health check stream not configured. Health consumer subprocess not started."
         )
@@ -811,7 +813,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             # we can't reliably get 'kind' or other fields from it.
             # This case is more relevant for non-StreamMessage processors.
             # For HealthChecks, we expect a structured 'content'.
-            print(f"[DEBUG] inner_content_data is not a dict, using defaults")
+            print("[DEBUG] inner_content_data is not a dict, using defaults")
             logger.warning(
                 f"Received non-dict inner_content_data: {inner_content_data}. HealthCheck might be missed if applicable."
             )
@@ -838,7 +840,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 inner_msg_id = inner_content_data.get("id", "")
                 actual_content_to_process = inner_content_data.get("content", {})
                 inner_created_at_str = inner_content_data.get("created_at")
-                print(f"[DEBUG] Using nested structure:")
+                print("[DEBUG] Using nested structure:")
                 print(f"[DEBUG]   inner_kind: '{inner_kind}'")
                 print(f"[DEBUG]   inner_msg_id: '{inner_msg_id}'")
                 print(
@@ -861,7 +863,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 inner_created_at_str = raw_payload.get(
                     "created_at"
                 )  # Get created_at from outer payload
-                print(f"[DEBUG] Using direct structure:")
+                print("[DEBUG] Using direct structure:")
                 print(f"[DEBUG]   inner_kind: '{inner_kind}' (from outer payload)")
                 print(f"[DEBUG]   inner_msg_id: '{inner_msg_id}' (from outer payload)")
                 print(
@@ -893,7 +895,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         adapter = raw_payload.get("adapter")  # from outer
         api_key = raw_payload.get("api_key")  # from outer
 
-        print(f"[DEBUG] Extracted outer envelope data:")
+        print("[DEBUG] Extracted outer envelope data:")
         print(f"[DEBUG]   return_stream: {return_stream}")
         print(f"[DEBUG]   user_id: {user_id}")
         print(f"[DEBUG]   orgs: {orgs}")
@@ -912,7 +914,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         )
 
         if inner_kind == "HealthCheckRequest":
-            print(f"[DEBUG] *** HEALTH CHECK REQUEST MESSAGE DETECTED ***")
+            print("[DEBUG] *** HEALTH CHECK REQUEST MESSAGE DETECTED ***")
             print(f"[DEBUG] Message ID: {message_id}")
             print(f"[DEBUG] Inner message ID: {inner_msg_id}")
             print(f"[DEBUG] Return stream: {return_stream}")
@@ -975,7 +977,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                     )
             else:
                 print(
-                    f"[DEBUG] No health stream configured, cannot forward health check"
+                    "[DEBUG] No health stream configured, cannot forward health check"
                 )
                 logger.warning(
                     "No health stream configured for health check forwarding"
@@ -1003,7 +1005,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 print(f"[DEBUG] ERROR acknowledging health check message: {e}")
                 logger.error(f"Error acknowledging health check message: {e}")
 
-            print(f"[DEBUG] *** HEALTH CHECK FORWARDING COMPLETE ***")
+            print("[DEBUG] *** HEALTH CHECK FORWARDING COMPLETE ***")
             return  # Exit early for health checks
         # --- End Health Check Logic ---
 
@@ -1044,7 +1046,9 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             # Need to handle potential NameErrors if imports failed silently
             # Note: This assumes models are defined in the imported module scope
             # Or imported by the imported module.
-            from nebu.processors.models import Message  # Import needed message class
+            from nebulous.processors.models import (
+                Message,  # Import needed message class
+            )
 
             if is_stream_message:
                 message_class = Message  # Use imported class
@@ -1088,7 +1092,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                         content_model = content_model_class.model_validate(
                             content_for_validation
                         )
-                        logger.debug(f">> Successfully validated content model")
+                        logger.debug(">> Successfully validated content model")
                         # print(f"Validated content model: {content_model}")
                         input_obj = message_class(
                             kind=inner_kind,
@@ -1103,7 +1107,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                             api_key=api_key,
                         )
                         logger.debug(
-                            f">> Successfully created Message object with validated content"
+                            ">> Successfully created Message object with validated content"
                         )
                     except Exception as e:
                         logger.error(
@@ -1126,11 +1130,11 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                             api_key=api_key,
                         )
                         logger.debug(
-                            f">> Created Message object with raw content fallback"
+                            ">> Created Message object with raw content fallback"
                         )
                 else:
                     # No content type name or class found, use raw content
-                    logger.debug(f">> No content model class found, using raw content")
+                    logger.debug(">> No content model class found, using raw content")
                     input_obj = message_class(
                         kind=inner_kind,
                         id=inner_msg_id,
@@ -1144,7 +1148,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                         api_key=api_key,
                     )
                     logger.debug(
-                        f">> Created Message object with raw content (no content model class)"
+                        ">> Created Message object with raw content (no content model class)"
                     )
             else:  # Not a stream message, use the function's parameter type
                 param_type_name = (
@@ -1231,7 +1235,10 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             ">> About to execute user function - note: print statements in user code may fail if the Message object has validation issues"
         )
 
-        result = target_function(input_obj)
+        if is_async_function:
+            result = asyncio.run(target_function(input_obj))
+        else:
+            result = target_function(input_obj)
 
         result_content = None  # Default to None
         if result is not None:  # Only process if there's a result
@@ -1321,15 +1328,15 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
 
 
 # --- Helper to Send Error Response ---
-def _send_error_response(
+async def _async_send_error_response(
     message_id: str,
     error_msg: str,
     tb: str,
     return_stream: Optional[str],
     user_id: Optional[str],
 ):
-    """Sends a standardized error response to Redis."""
-    global r, REDIS_STREAM  # Access global Redis connection and stream name
+    """Sends a standardized error response to Redis asynchronously."""
+    global r, REDIS_STREAM
 
     error_response = {
         "kind": "StreamResponseMessage",
@@ -1339,12 +1346,55 @@ def _send_error_response(
             "traceback": tb,
         },
         "status": "error",
-        "created_at": datetime.now(timezone.utc).isoformat(),  # Use UTC
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "user_id": user_id,
     }
 
-    error_destination = f"{REDIS_STREAM}.errors"  # Default error stream
-    if return_stream:  # Prefer return_stream if available
+    error_destination = f"{REDIS_STREAM}.errors"
+    if return_stream:
+        error_destination = return_stream
+
+    try:
+        assert isinstance(error_destination, str)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None, r.xadd, error_destination, {"data": json.dumps(error_response)}
+        )  # type: ignore
+        logger.info(
+            f"Sent error response for message {message_id} to {error_destination}"
+        )
+    except Exception as e_redis:
+        logger.critical(
+            f"CRITICAL: Failed to send error response for {message_id} to Redis: {e_redis}"
+        )
+        logger.exception("Redis Error Response Send Error Traceback:")
+
+
+# --- Helper to Send Error Response ---
+def _send_error_response(
+    message_id: str,
+    error_msg: str,
+    tb: str,
+    return_stream: Optional[str],
+    user_id: Optional[str],
+):
+    """Sends a standardized error response to Redis."""
+    global r, REDIS_STREAM
+
+    error_response = {
+        "kind": "StreamResponseMessage",
+        "id": message_id,
+        "content": {
+            "error": error_msg,
+            "traceback": tb,
+        },
+        "status": "error",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "user_id": user_id,
+    }
+
+    error_destination = f"{REDIS_STREAM}.errors"
+    if return_stream:
         error_destination = return_stream
 
     try:
@@ -1358,6 +1408,261 @@ def _send_error_response(
             f"CRITICAL: Failed to send error response for {message_id} to Redis: {e_redis}"
         )
         logger.exception("Redis Error Response Send Error Traceback:")
+
+
+async def async_process_message(message_id: str, message_data: Dict[str, str]) -> None:
+    """Processes a single message asynchronously, meant to be run concurrently."""
+    # This function mirrors the logic of the inline processing path in `process_message`
+    # but uses async/await and executes blocking I/O in an executor.
+    global target_function, imported_module, local_namespace
+    global r, REDIS_STREAM, REDIS_CONSUMER_GROUP
+
+    if target_function is None or imported_module is None:
+        logger.error(
+            f"Error processing message {message_id}: User code is not loaded. Skipping."
+        )
+        await _async_send_error_response(
+            message_id,
+            "User code is not loaded (likely due to a failed reload)",
+            traceback.format_exc(),
+            None,
+            None,
+        )
+        try:
+            assert isinstance(REDIS_STREAM, str)
+            assert isinstance(REDIS_CONSUMER_GROUP, str)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, r.xack, REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id
+            )  # type: ignore
+            logger.warning(
+                f"Acknowledged message {message_id} due to code load failure."
+            )
+        except Exception as e_ack:
+            logger.critical(
+                f"CRITICAL: Failed to acknowledge message {message_id} after code load failure: {e_ack}"
+            )
+        return
+
+    return_stream = None
+    user_id = None
+    try:
+        # Most of the parsing and object creation logic is synchronous and can be reused.
+        # The following is a recreation of the logic inside the original process_message try/except block.
+        payload_str = message_data.get("data")
+        if not payload_str:
+            raise ValueError(f"Missing 'data' field: {message_data}")
+        raw_payload = json.loads(payload_str)
+        if not isinstance(raw_payload, dict):
+            raise TypeError(f"Expected dict payload, got {type(raw_payload)}")
+
+        inner_content_data = raw_payload.get("content", {})
+        has_message_structure = (
+            isinstance(inner_content_data, dict)
+            and "kind" in inner_content_data
+            and "id" in inner_content_data
+            and "content" in inner_content_data
+        )
+
+        if has_message_structure:
+            inner_kind = inner_content_data.get("kind", "")
+            inner_msg_id = inner_content_data.get("id", "")
+            actual_content_to_process = inner_content_data.get("content", {})
+            inner_created_at_str = inner_content_data.get("created_at")
+        else:
+            inner_kind = raw_payload.get("kind", "")
+            inner_msg_id = raw_payload.get("id", "")
+            actual_content_to_process = inner_content_data
+            inner_created_at_str = raw_payload.get("created_at")
+
+        try:
+            inner_created_at = (
+                datetime.fromisoformat(inner_created_at_str)
+                if inner_created_at_str and isinstance(inner_created_at_str, str)
+                else datetime.now(timezone.utc)
+            )
+        except ValueError:
+            inner_created_at = datetime.now(timezone.utc)
+
+        return_stream = raw_payload.get("return_stream")
+        user_id = raw_payload.get("user_id")
+        orgs = raw_payload.get("organizations")
+        handle = raw_payload.get("handle")
+        adapter = raw_payload.get("adapter")
+        api_key = raw_payload.get("api_key")
+
+        if inner_kind == "HealthCheckRequest":
+            # Health checks are forwarded and not processed by the async function directly.
+            # This logic is now async to avoid blocking the event loop.
+            if REDIS_HEALTH_STREAM:
+                health_message_data = {
+                    "data": json.dumps(
+                        {
+                            "kind": inner_kind,
+                            "id": inner_msg_id,
+                            "content": actual_content_to_process,
+                            "created_at": inner_created_at.isoformat(),
+                            "return_stream": return_stream,
+                            "user_id": user_id,
+                            "orgs": orgs,
+                            "handle": handle,
+                            "adapter": adapter,
+                            "api_key": api_key,
+                            "original_message_id": message_id,
+                        }
+                    )
+                }
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None, r.xadd, REDIS_HEALTH_STREAM, health_message_data
+                )  # type: ignore
+                logger.info(
+                    f"Forwarded HealthCheckRequest {message_id} to health stream {REDIS_HEALTH_STREAM}"
+                )
+            else:
+                logger.warning(
+                    "No health stream configured for health check forwarding"
+                )
+                await _async_send_error_response(
+                    message_id,
+                    "Health check stream not configured",
+                    "REDIS_HEALTH_STREAM environment variable not set",
+                    return_stream,
+                    user_id,
+                )
+            # Acknowledge and exit
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, r.xack, REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id
+            )  # type: ignore
+            logger.info(f"Acknowledged HealthCheckRequest message {message_id}")
+            return
+
+        content_for_validation = actual_content_to_process
+        if isinstance(actual_content_to_process, str):
+            try:
+                content_for_validation = json.loads(actual_content_to_process)
+            except json.JSONDecodeError:
+                pass
+
+        # Input object construction logic (same as in process_message)
+        from nebulous.processors.models import Message
+
+        input_obj: Any = None
+        if is_stream_message:
+            content_model_class = None
+            if content_type_name:
+                content_model_class = getattr(
+                    imported_module, content_type_name, None
+                ) or local_namespace.get(content_type_name)
+            if content_model_class:
+                content_model = content_model_class.model_validate(
+                    content_for_validation
+                )
+                input_obj = Message(
+                    kind=inner_kind,
+                    id=inner_msg_id,
+                    content=content_model,
+                    created_at=int(inner_created_at.timestamp()),
+                    return_stream=return_stream,
+                    user_id=user_id,
+                    orgs=orgs,
+                    handle=handle,
+                    adapter=adapter,
+                    api_key=api_key,
+                )
+            else:
+                input_obj = Message(
+                    kind=inner_kind,
+                    id=inner_msg_id,
+                    content=cast(Any, content_for_validation),
+                    created_at=int(inner_created_at.timestamp()),
+                    return_stream=return_stream,
+                    user_id=user_id,
+                    orgs=orgs,
+                    handle=handle,
+                    adapter=adapter,
+                    api_key=api_key,
+                )
+        else:
+            param_type_name = param_type_str
+            input_type_class = (
+                getattr(imported_module, param_type_name, None)
+                if param_type_name
+                else None
+            ) or (local_namespace.get(param_type_name) if param_type_name else None)
+            if input_type_class:
+                input_obj = input_type_class.model_validate(content_for_validation)
+            else:
+                input_obj = content_for_validation
+
+        # Execute the function asynchronously
+        logger.info(f"Executing async function for message {message_id}...")
+        result = await target_function(input_obj)
+
+        result_content = None
+        if result is not None:
+            if hasattr(result, "model_dump"):
+                result_content = result.model_dump(mode="json")
+            else:
+                try:
+                    json.dumps(result)
+                    result_content = result
+                except TypeError:
+                    logger.warning("Result is not JSON serializable, discarding.")
+                    result_content = None
+
+        response = {
+            "kind": "StreamResponseMessage",
+            "id": message_id,
+            "content": result_content,
+            "status": "success",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "user_id": user_id,
+        }
+
+        loop = asyncio.get_running_loop()
+        if return_stream:
+            assert isinstance(return_stream, str)
+            await loop.run_in_executor(
+                None, r.xadd, return_stream, {"data": json.dumps(response)}
+            )  # type: ignore
+            logger.info(
+                f"Processed message {message_id}, result sent to {return_stream}"
+            )
+
+        assert isinstance(REDIS_STREAM, str)
+        assert isinstance(REDIS_CONSUMER_GROUP, str)
+        await loop.run_in_executor(
+            None, r.xack, REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id
+        )  # type: ignore
+
+    except RetriableError as e:
+        logger.warning(f"Retriable error processing message {message_id}: {e}")
+        await _async_send_error_response(
+            message_id, str(e), traceback.format_exc(), return_stream, user_id
+        )
+        logger.info(f"Message {message_id} will be retried later.")
+
+    except Exception as e:
+        logger.error(f"Error processing message {message_id}: {e}")
+        logger.exception("Message Processing Error Traceback:")
+        await _async_send_error_response(
+            message_id, str(e), traceback.format_exc(), return_stream, user_id
+        )
+
+        try:
+            assert isinstance(REDIS_STREAM, str)
+            assert isinstance(REDIS_CONSUMER_GROUP, str)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, r.xack, REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id
+            )  # type: ignore
+            logger.info(f"Acknowledged failed message {message_id}")
+        except Exception as e_ack:
+            logger.critical(
+                f"CRITICAL: Failed to acknowledge failed message {message_id}: {e_ack}"
+            )
 
 
 # Main loop
@@ -1379,29 +1684,29 @@ logger.info(
 
 # Start the health check consumer subprocess
 if REDIS_HEALTH_STREAM and REDIS_HEALTH_CONSUMER_GROUP:
-    print(f"[DEBUG] === HEALTH SUBPROCESS INITIALIZATION ===")
+    print("[DEBUG] === HEALTH SUBPROCESS INITIALIZATION ===")
     print(f"[DEBUG] REDIS_HEALTH_STREAM is set: {REDIS_HEALTH_STREAM}")
     print(f"[DEBUG] REDIS_HEALTH_CONSUMER_GROUP is set: {REDIS_HEALTH_CONSUMER_GROUP}")
 
     health_subprocess = start_health_check_subprocess()
     if health_subprocess:
         print(
-            f"[DEBUG] Health subprocess started successfully, starting monitor thread..."
+            "[DEBUG] Health subprocess started successfully, starting monitor thread..."
         )
         # Start monitoring thread for subprocess output
         monitor_thread = threading.Thread(
             target=monitor_health_subprocess, args=(health_subprocess,), daemon=True
         )
         monitor_thread.start()
-        print(f"[DEBUG] Monitor thread started for health subprocess")
+        print("[DEBUG] Monitor thread started for health subprocess")
         logger.info(
             f"[Consumer] Health check subprocess for {REDIS_HEALTH_STREAM} started and monitoring thread started."
         )
     else:
-        print(f"[DEBUG] Health subprocess failed to start")
+        print("[DEBUG] Health subprocess failed to start")
         logger.error("[Consumer] Failed to start health check subprocess.")
 else:
-    print(f"[DEBUG] === HEALTH SUBPROCESS NOT CONFIGURED ===")
+    print("[DEBUG] === HEALTH SUBPROCESS NOT CONFIGURED ===")
     print(f"[DEBUG] REDIS_HEALTH_STREAM: {REDIS_HEALTH_STREAM}")
     print(f"[DEBUG] REDIS_HEALTH_CONSUMER_GROUP: {REDIS_HEALTH_CONSUMER_GROUP}")
     logger.warning(
@@ -1413,15 +1718,15 @@ try:
         logger.debug(
             f"[{datetime.now(timezone.utc).isoformat()}] --- Top of main loop ---"
         )  # Added log
-        print(f"[DEBUG] === MAIN LOOP ITERATION START ===")
+        print("[DEBUG] === MAIN LOOP ITERATION START ===")
 
         # --- Check Health Subprocess Status ---
         if health_subprocess:
-            print(f"[DEBUG] Checking health subprocess status...")
+            print("[DEBUG] Checking health subprocess status...")
             health_status = check_health_subprocess()
             print(f"[DEBUG] Health subprocess status check result: {health_status}")
         else:
-            print(f"[DEBUG] No health subprocess to check")
+            print("[DEBUG] No health subprocess to check")
 
         # --- Check for Code Updates ---
         if not disable_hot_reload:
@@ -1634,7 +1939,7 @@ try:
         logger.debug(
             f"[{datetime.now(timezone.utc).isoformat()}] Calling xreadgroup (block=5000ms)..."
         )  # Added log
-        print(f"[DEBUG] About to call xreadgroup...")
+        print("[DEBUG] About to call xreadgroup...")
         print(f"[DEBUG] Stream: {REDIS_STREAM}")
         print(f"[DEBUG] Consumer group: {REDIS_CONSUMER_GROUP}")
         print(f"[DEBUG] Consumer name: {consumer_name}")
@@ -1643,7 +1948,7 @@ try:
             REDIS_CONSUMER_GROUP,
             consumer_name,
             streams_arg,  # type: ignore[arg-type] # Suppress linter warning
-            count=1,
+            count=10,
             block=5000,  # Use milliseconds for block
         )
 
@@ -1654,7 +1959,7 @@ try:
             logger.trace(
                 f"[{datetime.now(timezone.utc).isoformat()}] xreadgroup timed out (no new messages)."
             )  # Added log
-            print(f"[DEBUG] No messages received (timeout or empty)")
+            print("[DEBUG] No messages received (timeout or empty)")
             # logger.debug("[Consumer] No new messages.") # Reduce verbosity
             continue
         # Removed the else block here
@@ -1678,23 +1983,43 @@ try:
         )  # Moved and combined log
 
         # Process the received messages
-        # for msg_id_bytes, msg_data_bytes_dict in stream_messages: # Original structure
-        for (
-            message_id_str,
-            message_data_str_dict,
-        ) in stream_messages:  # Structure with decode_responses=True
-            # message_id_str = msg_id_bytes.decode('utf-8') # No longer needed
-            # Decode keys/values in the message data dict
-            # message_data_str_dict = { k.decode('utf-8'): v.decode('utf-8')
-            #                          for k, v in msg_data_bytes_dict.items() } # No longer needed
-            # print(f"Processing message {message_id_str}") # Reduce verbosity
-            # print(f"Message data: {message_data_str_dict}") # Reduce verbosity
-            print(f"[DEBUG] === PROCESSING MESSAGE {message_id_str} ===")
-            print(f"[DEBUG] Message data keys: {list(message_data_str_dict.keys())}")
+        if is_async_function:
+            # Concurrent processing for async functions
+            print(f"[DEBUG] Processing {num_msgs} messages concurrently...")
 
-            process_message(message_id_str, message_data_str_dict)
+            async def process_batch():
+                tasks = []
+                for message_id_str, message_data_str_dict in stream_messages:
+                    print(f"[DEBUG] Creating task for message {message_id_str}")
+                    task = asyncio.create_task(
+                        async_process_message(message_id_str, message_data_str_dict)
+                    )
+                    tasks.append(task)
+                await asyncio.gather(*tasks)
+                print("[DEBUG] Finished processing batch.")
 
-            print(f"[DEBUG] === FINISHED PROCESSING MESSAGE {message_id_str} ===")
+            asyncio.run(process_batch())
+        else:
+            # Sequential processing for regular functions
+            # for msg_id_bytes, msg_data_bytes_dict in stream_messages: # Original structure
+            for (
+                message_id_str,
+                message_data_str_dict,
+            ) in stream_messages:  # Structure with decode_responses=True
+                # message_id_str = msg_id_bytes.decode('utf-8') # No longer needed
+                # Decode keys/values in the message data dict
+                # message_data_str_dict = { k.decode('utf-8'): v.decode('utf-8')
+                #                          for k, v in msg_data_bytes_dict.items() } # No longer needed
+                # print(f"Processing message {message_id_str}") # Reduce verbosity
+                # print(f"Message data: {message_data_str_dict}") # Reduce verbosity
+                print(f"[DEBUG] === PROCESSING MESSAGE {message_id_str} ===")
+                print(
+                    f"[DEBUG] Message data keys: {list(message_data_str_dict.keys())}"
+                )
+
+                process_message(message_id_str, message_data_str_dict)
+
+                print(f"[DEBUG] === FINISHED PROCESSING MESSAGE {message_id_str} ===")
 
 except ConnectionError as e:
     logger.error(f"Redis connection error: {e}. Reconnecting in 5s...")

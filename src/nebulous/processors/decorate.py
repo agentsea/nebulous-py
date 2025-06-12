@@ -21,9 +21,9 @@ import requests
 from botocore.exceptions import ClientError
 from pydantic import BaseModel
 
-from nebu.auth import get_user_profile
-from nebu.config import GlobalConfig
-from nebu.containers.models import (
+from nebulous.auth import get_user_profile
+from nebulous.config import GlobalConfig
+from nebulous.containers.models import (
     V1AuthzConfig,
     V1ContainerHealthCheck,
     V1ContainerRequest,
@@ -35,14 +35,14 @@ from nebu.containers.models import (
     V1VolumeDriver,
     V1VolumePath,
 )
-from nebu.data import Bucket
-from nebu.logging import logger
-from nebu.meta import V1ResourceMetaRequest
-from nebu.processors.models import (
+from nebulous.data import Bucket
+from nebulous.logging import logger
+from nebulous.meta import V1ResourceMetaRequest
+from nebulous.processors.models import (
     Message,
     V1Scale,
 )
-from nebu.processors.processor import Processor
+from nebulous.processors.processor import Processor
 
 from .default import DEFAULT_MAX_REPLICAS, DEFAULT_MIN_REPLICAS, DEFAULT_SCALE
 
@@ -468,6 +468,9 @@ def processor(
             )
             return func  # type: ignore
         # --- End Guard ---
+
+        is_async = inspect.iscoroutinefunction(func)
+        logger.debug(f"Decorator: Function '{func.__name__}' is async: {is_async}")
 
         logger.debug(
             f"Decorator Init: @processor decorating function '{func.__name__}'"
@@ -1038,6 +1041,8 @@ def processor(
 
         # Basic info needed by consumer to find and run the function
         all_env.append(V1EnvVar(key="FUNCTION_NAME", value=actual_function_name))
+        all_env.append(V1EnvVar(key="IS_ASYNC_FUNCTION", value=str(is_async)))
+
         if rel_func_path:
             # For now, just pass the relative file path, consumer will handle conversion
             all_env.append(
