@@ -5,7 +5,7 @@ A declarative python library for the [Nebulous runtime](https://github.com/agent
 ## Installation
 
 ```bash
-pip install nebulous-py
+pip install nebulous-sh
 ```
 
 ## Usage
