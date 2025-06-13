@@ -14,8 +14,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 import redis
 import socks
 
-from nebu.errors import RetriableError
-from nebu.logging import logger  # Import the logger
+from nebulous.errors import RetriableError
+from nebulous.logging import logger  # Import the logger
 
 # from redis import ConnectionError, ResponseError # Removed unused imports
 
@@ -79,7 +79,7 @@ def load_user_code(
                 exec_namespace,
             )
             exec("T_exec = TypeVar('T_exec')", exec_namespace)
-            exec("from nebu.processors.models import *", exec_namespace)
+            exec("from nebulous.processors.models import *", exec_namespace)
             # ... add other common imports if needed by included objects ...
 
             for i, (obj_source, args_sources) in enumerate(included_object_sources):
@@ -550,7 +550,7 @@ if __name__ == "__main__":
                 input_obj: Any = None
                 input_type_class = None
                 try:
-                    from nebu.processors.models import Message
+                    from nebulous.processors.models import Message
 
                     if is_stream_message:
                         message_class = Message

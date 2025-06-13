@@ -57,7 +57,7 @@ _NEBU_INSIDE_CONSUMER_ENV_VAR = "_NEBU_INSIDE_CONSUMER_EXEC"
 # Define target directory in container
 CONTAINER_CODE_DIR = "/app/src"
 # Define S3 prefix for code storage (under the base URI from token endpoint)
-S3_CODE_PREFIX = "nebu-code"
+S3_CODE_PREFIX = "nebulous-code"
 NEBU_API_BASE_URL = GlobalConfig.get_server_url()
 
 # --- Jupyter Helper Functions ---
@@ -1255,7 +1255,7 @@ def processor(
             name=processor_name, namespace=effective_namespace, labels=labels
         )
         # Base command now just runs the consumer module, relies on PYTHONPATH finding code
-        consumer_module = "nebu.processors.consumer"
+        consumer_module = "nebulous.processors.consumer"
         if "accelerate launch" in python_cmd:
             consumer_execution_command = f"{python_cmd.strip()} -m {consumer_module}"
         else:

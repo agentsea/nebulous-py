@@ -99,7 +99,7 @@ def load_or_reload_user_code(
                 exec_namespace,
             )
             exec("T_exec = TypeVar('T_exec')", exec_namespace)
-            exec("from nebu.processors.models import *", exec_namespace)
+            exec("from nebulous.processors.models import *", exec_namespace)
             # ... add other common imports if needed by included objects ...
 
             for i, (obj_source, args_sources) in enumerate(included_object_sources):
@@ -422,7 +422,7 @@ def start_health_check_subprocess() -> Optional[subprocess.Popen]:
             sys.executable,
             "-u",  # Force unbuffered stdout/stderr
             "-m",
-            "nebu.processors.consumer_health_worker",
+            "nebulous.processors.consumer_health_worker",
         ]
 
         print(f"[DEBUG] Health subprocess command: {' '.join(health_cmd)}")
@@ -568,7 +568,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                 sys.executable,
                 "-u",  # Force unbuffered stdout/stderr in the subprocess
                 "-m",
-                "nebu.processors.consumer_process_worker",
+                "nebulous.processors.consumer_process_worker",
             ]
             process_input = json.dumps(
                 {"message_id": message_id, "message_data": message_data}
@@ -664,7 +664,7 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
 
         except FileNotFoundError:
             logger.critical(
-                "FATAL: Worker script 'nebu.processors.consumer_process_worker' not found. Check PYTHONPATH."
+                "FATAL: Worker script 'nebulous.processors.consumer_process_worker' not found. Check PYTHONPATH."
             )
             # Send error and ack if possible
             _send_error_response(
