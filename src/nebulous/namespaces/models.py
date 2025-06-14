@@ -2,7 +2,7 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from nebu.meta import V1ResourceMeta
+from nebulous.meta import V1ResourceMeta
 
 
 class V1NamespaceMetaRequest(BaseModel):

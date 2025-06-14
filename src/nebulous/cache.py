@@ -7,7 +7,7 @@ import redis
 import socks  # Add socks import
 from pydantic import BaseModel, Field
 
-from nebu.logging import logger  # Import the logger
+from nebulous.logging import logger  # Import the logger
 
 
 class OwnedValue(BaseModel):

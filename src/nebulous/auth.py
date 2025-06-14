@@ -3,7 +3,7 @@ from typing import Dict, Optional
 import requests
 from pydantic import BaseModel
 
-from nebu.config import GlobalConfig
+from nebulous.config import GlobalConfig
 
 
 class V1UserProfile(BaseModel):

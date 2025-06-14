@@ -1,4 +1,4 @@
-from nebu.processors.models import V1Scale, V1ScaleDown, V1ScaleUp, V1ScaleZero
+from nebulous.processors.models import V1Scale, V1ScaleDown, V1ScaleUp, V1ScaleZero
 
 DEFAULT_SCALE = V1Scale(
     up=V1ScaleUp(

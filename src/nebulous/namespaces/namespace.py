@@ -2,9 +2,9 @@ from typing import Dict, List, Optional
 
 import requests
 
-from nebu.config import GlobalConfig
-from nebu.logging import logger
-from nebu.namespaces.models import (
+from nebulous.config import GlobalConfig
+from nebulous.logging import logger
+from nebulous.namespaces.models import (
     V1Namespace,
     V1NamespaceMetaRequest,
     V1NamespaceRequest,

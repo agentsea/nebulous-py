@@ -1,6 +1,6 @@
 import time
 
-from nebu.data import Bucket
+from nebulous.data import Bucket
 
 bucket = Bucket()
 bucket.sync("./testdata", "s3://nebulous-rs/testdata/bucket-test")

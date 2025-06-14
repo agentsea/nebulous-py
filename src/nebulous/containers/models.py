@@ -3,7 +3,7 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from nebu.meta import V1ResourceMeta, V1ResourceMetaRequest
+from nebulous.meta import V1ResourceMeta, V1ResourceMetaRequest
 
 
 # 1) If you're still using V1ErrorResponse, no change needed here.

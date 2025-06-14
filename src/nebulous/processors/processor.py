@@ -19,10 +19,10 @@ from typing import (
 import requests
 from pydantic import BaseModel
 
-from nebu.config import GlobalConfig
-from nebu.logging import logger
-from nebu.meta import V1ResourceMetaRequest, V1ResourceReference
-from nebu.processors.models import (
+from nebulous.config import GlobalConfig
+from nebulous.logging import logger
+from nebulous.meta import V1ResourceMetaRequest, V1ResourceReference
+from nebulous.processors.models import (
     V1ContainerRequest,
     V1Processor,
     V1ProcessorHealthResponse,

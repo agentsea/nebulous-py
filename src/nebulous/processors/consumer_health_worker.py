@@ -13,7 +13,7 @@ from redis import ConnectionError, ResponseError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
 # Assuming these are imported from other modules
-from nebu.processors.models import V1ProcessorHealthResponse
+from nebulous.processors.models import V1ProcessorHealthResponse
 
 
 def setup_health_logging():

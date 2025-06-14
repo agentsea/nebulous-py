@@ -3,8 +3,8 @@ from typing import Any, Generic, List, Optional, TypeVar
 from pydantic import BaseModel
 
 # Assuming these are imported from other modules
-from nebu.containers.models import V1ContainerRequest
-from nebu.meta import V1ResourceMeta, V1ResourceMetaRequest, V1ResourceReference
+from nebulous.containers.models import V1ContainerRequest
+from nebulous.meta import V1ResourceMeta, V1ResourceMetaRequest, V1ResourceReference
 
 # Type variable for content that must be a BaseModel
 T = TypeVar("T", bound=BaseModel)

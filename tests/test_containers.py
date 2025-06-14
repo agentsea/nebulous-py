@@ -3,8 +3,8 @@ import string
 
 import pytest
 
-from nebu.config import GlobalConfig
-from nebu.containers.container import Container
+from nebulous.config import GlobalConfig
+from nebulous.containers.container import Container
 
 
 @pytest.fixture

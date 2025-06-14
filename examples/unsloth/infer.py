@@ -12,13 +12,13 @@ from chatmux.openai import (
 )
 from utils import Adapter
 
-from nebu import (
+from nebulous import (
     Bucket,
     ContainerConfig,
     Message,
     is_allowed,
 )
-from nebu.processors.decorate import processor
+from nebulous.processors.decorate import processor
 
 setup_script = """
 apt update
@@ -46,7 +46,7 @@ def init():
     import torch
     from unsloth import FastVisionModel
 
-    from nebu import Cache
+    from nebulous import Cache
 
     if "state" in globals():  # <-- already loaded by an earlier worker
         return

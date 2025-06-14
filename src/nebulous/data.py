@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import boto3
 from botocore.exceptions import ClientError
 
-from nebu.logging import logger
+from nebulous.logging import logger
 
 
 # For RcloneBucket with direct subprocess calls

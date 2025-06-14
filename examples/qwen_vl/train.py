@@ -35,7 +35,7 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
-from nebu import (
+from nebulous import (
     Bucket,
     Cache,
     ContainerConfig,

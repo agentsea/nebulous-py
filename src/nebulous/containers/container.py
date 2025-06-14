@@ -2,8 +2,8 @@ from typing import List, Optional
 
 import requests
 
-from nebu.config import GlobalConfig  # or wherever your GlobalConfig is defined
-from nebu.containers.models import (
+from nebulous.config import GlobalConfig  # or wherever your GlobalConfig is defined
+from nebulous.containers.models import (
     DEFAULT_RESTART_POLICY,
     V1AuthzConfig,
     V1Container,
@@ -18,8 +18,8 @@ from nebu.containers.models import (
     V1SSHKey,
     V1VolumePath,
 )
-from nebu.logging import logger  # Import the logger
-from nebu.meta import V1ResourceReference
+from nebulous.logging import logger  # Import the logger
+from nebulous.meta import V1ResourceReference
 
 
 class Container:

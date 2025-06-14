@@ -5,9 +5,9 @@ from pydantic import BaseModel
 from sub.print_util import print_lower_level
 from utils import Adapter, print_same_level
 
-from nebu import Message
-from nebu.processors.decorate import processor
-from nebu.processors.models import (
+from nebulous import Message
+from nebulous.processors.decorate import processor
+from nebulous.processors.models import (
     V1Scale,
     V1ScaleDown,
     V1ScaleUp,
@@ -84,7 +84,7 @@ def train_unsloth_sft(message: Message[TrainingRequest]) -> TrainingResponse:
     from chatmux import oai_to_unsloth
     from trl import SFTConfig, SFTTrainer
 
-    from nebu import (
+    from nebulous import (
         Bucket,
         Cache,
         ContainerConfig,
