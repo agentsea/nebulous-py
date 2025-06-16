@@ -254,28 +254,42 @@ try:
         sys.exit(1)
 
     # Calculate absolute path for modification time checking
-    # Assuming CWD or PYTHONPATH allows finding the relative path
     # This might need adjustment based on deployment specifics
-    entrypoint_abs_path = os.path.abspath(_entrypoint_rel_path)
-    if not os.path.exists(entrypoint_abs_path):
-        # Try constructing path based on PYTHONPATH if direct abspath fails
+    entrypoint_abs_path = ""  # Initialize as empty
+    found_path = False
+
+    # Retry loop to wait for the entrypoint file to be synced
+    max_wait_seconds = 15
+    start_time = time.time()
+    logger.info(f"Searching for entrypoint file '{_entrypoint_rel_path}'...")
+
+    while time.time() - start_time < max_wait_seconds:
         python_path = os.environ.get("PYTHONPATH", "").split(os.pathsep)
-        found_path = False
         for p_path in python_path:
-            potential_path = os.path.abspath(os.path.join(p_path, _entrypoint_rel_path))
+            # Construct path relative to the PYTHONPATH entry
+            potential_path = os.path.join(p_path, _entrypoint_rel_path)
             if os.path.exists(potential_path):
                 entrypoint_abs_path = potential_path
                 found_path = True
                 logger.info(
                     f"[Consumer] Found entrypoint absolute path via PYTHONPATH: {entrypoint_abs_path}"
                 )
-                break
-        if not found_path:
-            logger.critical(
-                f"FATAL: Could not find entrypoint file via relative path '{_entrypoint_rel_path}' or in PYTHONPATH."
-            )
-            # Attempting abspath anyway for the error message in load function
-            entrypoint_abs_path = os.path.abspath(_entrypoint_rel_path)
+                break  # Exit the inner for loop
+        if found_path:
+            break  # Exit the while loop
+
+        logger.debug(
+            f"Entrypoint file '{_entrypoint_rel_path}' not found yet. Retrying in 1 second..."
+        )
+        time.sleep(1)
+
+    if not found_path:
+        logger.critical(
+            f"FATAL: Could not find entrypoint file '{_entrypoint_rel_path}' in PYTHONPATH after waiting {max_wait_seconds} seconds."
+        )
+        # Attempting abspath anyway for the error message in load function
+        entrypoint_abs_path = os.path.abspath(_entrypoint_rel_path)
+        sys.exit(1)
 
     # Convert entrypoint file path to module path
     _module_path = _entrypoint_rel_path.replace(os.sep, ".")
@@ -283,6 +297,8 @@ try:
         _module_path = _module_path[:-3]
     if _module_path.endswith(".__init__"):
         _module_path = _module_path[: -len(".__init__")]
+    elif _module_path.startswith("__init__"):
+        _module_path = _module_path[len("__init__.") :]
     elif _module_path == "__init__":
         logger.critical(
             f"FATAL: Entrypoint '{_entrypoint_rel_path}' resolves to ambiguous top-level __init__. Please use a named file or package."
@@ -1486,7 +1502,7 @@ async def async_process_message(message_id: str, message_data: Dict[str, str]) -
 
         return_stream = raw_payload.get("return_stream")
         user_id = raw_payload.get("user_id")
-        orgs = raw_payload.get("organizations")
+        orgs = raw_payload.get("orgs")
         handle = raw_payload.get("handle")
         adapter = raw_payload.get("adapter")
         api_key = raw_payload.get("api_key")

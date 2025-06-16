@@ -55,7 +55,7 @@ _NEBU_EXPLICIT_SOURCE_ATTR = "_nebu_explicit_source"
 _NEBU_INSIDE_CONSUMER_ENV_VAR = "_NEBU_INSIDE_CONSUMER_EXEC"
 
 # Define target directory in container
-CONTAINER_CODE_DIR = "/app/src"
+CONTAINER_CODE_DIR = "/app"
 # Define S3 prefix for code storage (under the base URI from token endpoint)
 S3_CODE_PREFIX = "nebulous-code"
 NEBU_API_BASE_URL = GlobalConfig.get_server_url()
