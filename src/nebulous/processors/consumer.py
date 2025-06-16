@@ -87,7 +87,25 @@ def load_or_reload_user_code(
     )
 
     try:
-        current_mtime = os.path.getmtime(entrypoint_abs_path)
+        # Retry logic for getmtime with progressive backoff
+        max_retries = 5
+        initial_delay = 0.1  # Start with 100ms
+        for attempt in range(max_retries):
+            try:
+                current_mtime = os.path.getmtime(entrypoint_abs_path)
+                break  # Success
+            except FileNotFoundError:
+                if attempt < max_retries - 1:
+                    delay = initial_delay * (2**attempt)
+                    logger.warning(
+                        f"[Code Loader] getmtime failed for '{entrypoint_abs_path}' (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error(
+                        f"[Code Loader] getmtime failed for '{entrypoint_abs_path}' after {max_retries} attempts."
+                    )
+                    raise  # Re-raise the final FileNotFoundError
 
         # Execute included object sources FIRST (if any)
         if included_object_sources:
@@ -1751,7 +1769,27 @@ try:
             )  # Added log
             if entrypoint_abs_path:  # Should always be set after init
                 try:
-                    current_mtime = os.path.getmtime(entrypoint_abs_path)
+                    # Retry logic for getmtime with progressive backoff
+                    current_mtime = 0
+                    max_retries = 5
+                    initial_delay = 0.1  # Start with 100ms
+                    for attempt in range(max_retries):
+                        try:
+                            current_mtime = os.path.getmtime(entrypoint_abs_path)
+                            break  # Success
+                        except FileNotFoundError:
+                            if attempt < max_retries - 1:
+                                delay = initial_delay * (2**attempt)
+                                logger.warning(
+                                    f"[Consumer] getmtime check failed for '{entrypoint_abs_path}' (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.2f}s..."
+                                )
+                                time.sleep(delay)
+                            else:
+                                logger.error(
+                                    f"[Consumer] getmtime check failed for '{entrypoint_abs_path}' after {max_retries} attempts. Skipping reload."
+                                )
+                                raise  # Re-raise the final FileNotFoundError
+
                     if current_mtime > last_load_mtime:
                         logger.info(
                             f"[Consumer] Detected change in entrypoint file: {entrypoint_abs_path}. Reloading code..."
