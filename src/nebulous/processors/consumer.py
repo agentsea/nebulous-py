@@ -89,10 +89,15 @@ def load_or_reload_user_code(
     try:
         # Retry logic for getmtime with progressive backoff
         max_retries = 5
-        initial_delay = 0.1  # Start with 100ms
+        initial_delay = 0.3  # Start with 100ms
         for attempt in range(max_retries):
+            logger.info(f"[Code Loader] Attempt {attempt + 1}/{max_retries}")
             try:
+                logger.info(f"[Code Loader] Getting mtime for '{entrypoint_abs_path}'")
                 current_mtime = os.path.getmtime(entrypoint_abs_path)
+                logger.info(
+                    f"[Code Loader] mtime for '{entrypoint_abs_path}' is {current_mtime}"
+                )
                 break  # Success
             except FileNotFoundError:
                 if attempt < max_retries - 1:
@@ -105,7 +110,29 @@ def load_or_reload_user_code(
                     logger.error(
                         f"[Code Loader] getmtime failed for '{entrypoint_abs_path}' after {max_retries} attempts."
                     )
+                    dir_path = os.path.dirname(entrypoint_abs_path)
+                    if dir_path and os.path.isdir(dir_path):
+                        logger.error(f"Listing contents of directory '{dir_path}':")
+                        try:
+                            for item in os.listdir(dir_path):
+                                logger.error(f"  - {item}")
+                        except OSError as e:
+                            logger.error(f"    Error listing directory: {e}")
+                    elif dir_path:
+                        logger.error(f"Directory '{dir_path}' does not exist.")
+                    else:
+                        logger.error(
+                            f"Could not determine directory from path '{entrypoint_abs_path}'"
+                        )
                     raise  # Re-raise the final FileNotFoundError
+            except Exception as e:
+                logger.error(
+                    f"[Code Loader] Error getting mtime for '{entrypoint_abs_path}': {e}"
+                )
+                logger.exception(
+                    f"[Code Loader] Traceback for error getting mtime for '{entrypoint_abs_path}':"
+                )
+                raise  # Re-raise the final Exception
 
         # Execute included object sources FIRST (if any)
         if included_object_sources:
@@ -198,6 +225,22 @@ def load_or_reload_user_code(
         logger.error(
             f"[Code Loader] Error: Entrypoint file not found at '{entrypoint_abs_path}'. Cannot load/reload."
         )
+        # Add directory listing for debugging
+        dir_path = os.path.dirname(entrypoint_abs_path)
+        if dir_path and os.path.isdir(dir_path):
+            logger.error(f"Listing contents of directory '{dir_path}':")
+            try:
+                for item in os.listdir(dir_path):
+                    logger.error(f"  - {item}")
+            except OSError as e:
+                logger.error(f"    Error listing directory: {e}")
+        elif dir_path:
+            logger.error(f"Directory '{dir_path}' does not exist.")
+        else:
+            logger.error(
+                f"Could not determine directory from path '{entrypoint_abs_path}'"
+            )
+
         return None, None, None, {}, 0.0  # Indicate failure
     except ImportError as e:
         logger.error(
@@ -305,6 +348,21 @@ try:
         logger.critical(
             f"FATAL: Could not find entrypoint file '{_entrypoint_rel_path}' in PYTHONPATH after waiting {max_wait_seconds} seconds."
         )
+        python_path = os.environ.get("PYTHONPATH", "").split(os.pathsep)
+        logger.critical("Searched in the following PYTHONPATH directories:")
+        for p_path in python_path:
+            if os.path.isdir(p_path):
+                logger.critical(f"- Contents of '{p_path}':")
+                try:
+                    # To avoid log spam, list top-level contents only
+                    contents = os.listdir(p_path)
+                    for item in contents:
+                        logger.critical(f"  - {item}")
+                except OSError as e:
+                    logger.critical(f"    Could not list directory contents: {e}")
+            else:
+                logger.critical(f"- '{p_path}' (is not a directory or does not exist)")
+
         # Attempting abspath anyway for the error message in load function
         entrypoint_abs_path = os.path.abspath(_entrypoint_rel_path)
         sys.exit(1)
@@ -700,6 +758,21 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             logger.critical(
                 "FATAL: Worker script 'nebulous.processors.consumer_process_worker' not found. Check PYTHONPATH."
             )
+            python_path = os.environ.get("PYTHONPATH", "").split(os.pathsep)
+            logger.critical("Current PYTHONPATH directories:")
+            for p_path in python_path:
+                if os.path.isdir(p_path):
+                    logger.critical(f"- Contents of '{p_path}':")
+                    try:
+                        contents = os.listdir(p_path)
+                        for item in contents:
+                            logger.critical(f"  - {item}")
+                    except OSError as e:
+                        logger.critical(f"    Could not list directory contents: {e}")
+                else:
+                    logger.critical(
+                        f"- '{p_path}' (is not a directory or does not exist)"
+                    )
             # Send error and ack if possible
             _send_error_response(
                 message_id,
@@ -1832,6 +1905,21 @@ try:
                     logger.error(
                         f"[Consumer] Error: Entrypoint file '{entrypoint_abs_path}' not found during check. Cannot reload."
                     )
+                    # Add directory listing for debugging
+                    dir_path = os.path.dirname(entrypoint_abs_path)
+                    if dir_path and os.path.isdir(dir_path):
+                        logger.error(f"Listing contents of directory '{dir_path}':")
+                        try:
+                            for item in os.listdir(dir_path):
+                                logger.error(f"  - {item}")
+                        except OSError as e:
+                            logger.error(f"    Error listing directory: {e}")
+                    elif dir_path:
+                        logger.error(f"Directory '{dir_path}' does not exist.")
+                    else:
+                        logger.error(
+                            f"Could not determine directory from path '{entrypoint_abs_path}'"
+                        )
                     # Mark as non-runnable? Or just log?
                     target_function = None  # Stop processing until file reappears?
                     imported_module = None
