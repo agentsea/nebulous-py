@@ -1377,19 +1377,49 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         else:
             result = target_function(input_obj)
 
-        # --- Streaming support for generator results ---
-        if isinstance(result, types.GeneratorType):
+        # Debug: Check what type of result we got
+        logger.info(f"[Consumer] Function result type: {type(result)}")
+        logger.info(f"[Consumer] Result value: {result}")
+        logger.info(
+            f"[Consumer] Is GeneratorType: {isinstance(result, types.GeneratorType)}"
+        )
+        if hasattr(types, "AsyncGeneratorType"):
             logger.info(
-                "[Consumer] Detected generator result – streaming chunks as they arrive."
+                f"[Consumer] Is AsyncGeneratorType: {isinstance(result, types.AsyncGeneratorType)}"
+            )
+
+        # --- Streaming support for generator results ---
+        is_generator = isinstance(result, types.GeneratorType)
+        is_async_generator = hasattr(types, "AsyncGeneratorType") and isinstance(
+            result, types.AsyncGeneratorType
+        )
+
+        if is_generator or is_async_generator:
+            logger.info(
+                f"[Consumer] Detected {'async ' if is_async_generator else ''}generator result – streaming chunks as they arrive."
             )
 
             chunk_index = 0
             try:
-                for chunk in result:
+                # Convert async generator to list first if needed
+                if is_async_generator:
+
+                    async def collect_async_chunks():
+                        chunks = []
+                        async for chunk in result:  # type: ignore[misc]
+                            chunks.append(chunk)
+                        return chunks
+
+                    chunks = asyncio.run(collect_async_chunks())
+                else:
+                    chunks = list(result)  # type: ignore[misc]
+
+                # Process all chunks
+                for chunk in chunks:  # type: ignore[misc]
                     try:
                         # Serialize chunk similar to single result handling
-                        if hasattr(chunk, "model_dump"):
-                            chunk_content = chunk.model_dump(mode="json")
+                        if hasattr(chunk, "model_dump"):  # type: ignore[misc]
+                            chunk_content = chunk.model_dump(mode="json")  # type: ignore[misc]
                         else:
                             # Ensure JSON serializable
                             try:
@@ -1469,8 +1499,8 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         result_content = None  # Default to None
         if result is not None:
             try:
-                if hasattr(result, "model_dump"):
-                    result_content = result.model_dump(mode="json")
+                if hasattr(result, "model_dump"):  # type: ignore[misc]
+                    result_content = result.model_dump(mode="json")  # type: ignore[misc]
                 else:
                     try:
                         json.dumps(result)
@@ -1815,8 +1845,8 @@ async def async_process_message(message_id: str, message_data: Dict[str, str]) -
 
         result_content = None
         if result is not None:
-            if hasattr(result, "model_dump"):
-                result_content = result.model_dump(mode="json")
+            if hasattr(result, "model_dump"):  # type: ignore[misc]
+                result_content = result.model_dump(mode="json")  # type: ignore[misc]
             else:
                 try:
                     json.dumps(result)

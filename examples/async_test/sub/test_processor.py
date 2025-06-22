@@ -1,3 +1,5 @@
+import time
+
 from pydantic import BaseModel
 
 from nebulous.processors.decorate import processor
@@ -29,6 +31,40 @@ async def my_async_processor(msg: Message[Input]) -> Output:
     print(f"Processor received: {msg.content.greeting}")
     response_text = f"Hello back to you! You said: {msg.content.greeting}"
     return Output(response=response_text)
+
+
+# --- Generator processor to test streaming ---
+
+
+@processor(
+    image="python:3.11",
+    name="async-test-generator-processor",
+    accelerators=["1:L40S"],
+    wait_for_healthy=True,
+    stream=True,  # enables generator semantics by default
+)
+def my_generator_processor(msg: Message[Input]) -> Output:  # type: ignore[misc]
+    """Simple generator processor that yields three chunks."""
+    for idx in range(3):
+        yield Output(response=f"chunk {idx}: {msg.content.greeting}")  # type: ignore[arg-type]
+        time.sleep(0.5)
+
+
+# --- Async generator processor to test async streaming ---
+@processor(
+    image="python:3.11",
+    name="async-test-async-generator-processor",
+    accelerators=["1:L40S"],
+    wait_for_healthy=True,
+    stream=True,  # enables generator semantics by default
+)
+async def my_async_generator_processor(msg: Message[Input]) -> Output:  # type: ignore[misc]
+    """Simple async generator processor that yields three chunks."""
+    import asyncio
+
+    for idx in range(3):
+        yield Output(response=f"async chunk {idx}: {msg.content.greeting}")  # type: ignore[arg-type]
+        await asyncio.sleep(0.5)
 
 
 print("__name__", __name__)

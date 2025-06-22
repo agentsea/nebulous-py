@@ -1,6 +1,6 @@
 [project]
 name = "nebulous-sh"
-version = "0.1.137"
+version = "0.1.138"
 description = "A globally distributed container runtime"
 readme = "README.md"
 requires-python = ">=3.10.14"

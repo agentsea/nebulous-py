@@ -850,30 +850,47 @@ def processor(
                         "Decorator: Regex fallback failed to extract content type name."
                     )
                 # --- Regex Fallback End ---
-        # Check 2a: Regex fallback if get_origin failed but string matches pattern
-        elif origin is None and param_type is not None:
+        # Check 2: String-based detection when get_origin fails
+        elif param_type is not None and "Message[" in param_type_str_repr:
             logger.debug(
-                "Decorator: get_origin failed. Attempting regex fallback on string representation."
+                "Decorator: get_origin failed but string contains 'Message['. Using string-based detection."
             )
-            match = re.search(r"Message\[([\w\.]+)\]", param_type_str_repr)
+            match = re.search(r"Message\[([^\]]+)\]", param_type_str_repr)
             if match:
-                logger.debug(
-                    "Decorator: Regex fallback successful after get_origin failed."
-                )
+                logger.debug("Decorator: String-based Message detection successful.")
                 is_stream_message = True
                 content_type_name_from_regex = match.group(1)
-                # We don't have the actual content_type object here, only the name
+                # Try to resolve the content type by name
                 content_type = None
+                try:
+                    # Try to get the actual type from the function's globals
+                    if (
+                        hasattr(func, "__globals__")
+                        and content_type_name_from_regex in func.__globals__
+                    ):
+                        content_type = func.__globals__[content_type_name_from_regex]
+                        logger.debug(
+                            f"Decorator: Resolved content type from function globals: {content_type}"
+                        )
+                    elif content_type_name_from_regex in globals():
+                        content_type = globals()[content_type_name_from_regex]
+                        logger.debug(
+                            f"Decorator: Resolved content type from globals: {content_type}"
+                        )
+                except Exception as resolve_err:
+                    logger.debug(
+                        f"Decorator: Could not resolve content type by name: {resolve_err}"
+                    )
                 logger.debug(
                     f"Decorator: Extracted content type name via regex: {content_type_name_from_regex}"
                 )
             else:
                 logger.debug(
-                    "Decorator: Regex fallback also failed. Treating as non-Message type."
+                    "Decorator: String-based detection also failed. Treating as non-Message type."
                 )
                 is_stream_message = False
                 content_type = None
-        # Check 2: Direct type check (Handles cases where get_origin might fail but type is correct)
+        # Check 3: Direct type check (Handles cases where get_origin might fail but type is correct)
         elif isinstance(param_type, type) and param_type is message_cls:
             # This case likely won't have generic args accessible easily if get_origin failed
             logger.debug(
