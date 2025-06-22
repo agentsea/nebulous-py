@@ -6,6 +6,7 @@ import time
 from typing import (
     Any,
     Dict,
+    Generator,
     Generic,
     List,
     Optional,
@@ -261,7 +262,8 @@ class Processor(Generic[InputType, OutputType]):
         timeout: Optional[float] = 3600,
         poll: bool = False,
         poll_interval_seconds: float = 2.0,
-    ) -> OutputType | Dict[str, Any] | None:
+        stream: bool = False,
+    ) -> Any:
         """
         Allows the Processor instance to be called like a function, sending data.
         """
@@ -269,6 +271,7 @@ class Processor(Generic[InputType, OutputType]):
             data=data,
             wait=wait,
             logs=logs,
+            stream=stream,
             api_key=api_key,
             user_key=user_key,
             timeout=timeout,
@@ -286,7 +289,8 @@ class Processor(Generic[InputType, OutputType]):
         timeout: Optional[float] = 3600,
         poll: bool = False,
         poll_interval_seconds: float = 2.0,
-    ) -> OutputType | Dict[str, Any] | None:
+        stream: bool = False,
+    ) -> Any:
         """
         Send data to the processor.
         If wait=True, the request to the /messages endpoint waits for the processing to complete.
@@ -295,7 +299,7 @@ class Processor(Generic[InputType, OutputType]):
         Optionally streams logs in the background if logs=True.
         """
         logger.debug(
-            f"Sending data to processor {self.name}: {data}, wait={wait}, poll={poll}, logs={logs}"
+            f"Sending data to processor {self.name}: {data}, wait={wait}, poll={poll}, logs={logs}, stream={stream}"
         )
 
         if (
@@ -315,6 +319,11 @@ class Processor(Generic[InputType, OutputType]):
                 f"Processor {processor_name}: API key is missing for the send operation."
             )
             raise ValueError("API key not available for sending message.")
+
+        # Determine if streaming should be enabled by default for this instance
+        # Priority: explicit `stream` argument -> instance attribute `_stream_enabled` -> False
+        if not stream and getattr(self, "_stream_enabled", False):
+            stream = True
 
         # --- Send Initial Message ---
         messages_url = (
@@ -359,142 +368,178 @@ class Processor(Generic[InputType, OutputType]):
         # Initialize raw_content. This will hold the final data payload.
         raw_content: Optional[Union[Dict[str, Any], List[Any], str]] = None
 
-        # --- Handle Response: Polling or Direct Content ---
-        # Poll only if poll=True AND the initial request was configured not to wait (wait=False).
-        if poll and not stream_data_wait_param:
+        # --- Handle Response: Streaming or Polling ---
+        if stream:
+            # --- Streaming / Generator behaviour ---
+            if wait:
+                logger.warning(
+                    "Argument 'wait' is ignored when 'stream' is True. Proceeding with streaming behaviour (non-blocking)."
+                )
+            if poll:
+                logger.warning(
+                    "Argument 'poll' is ignored when 'stream' is True. Streaming implicitly handles polling internally."
+                )
+
             message_id = raw_response_json.get("message_id")
             return_stream = raw_response_json.get("return_stream")
 
-            if not message_id or not isinstance(message_id, str):
-                logger.error(
-                    f"Processor {processor_name}: Polling requested but 'message_id' (string) not found or invalid in initial response. Response: {raw_response_json}"
-                )
+            if not (isinstance(message_id, str) and isinstance(return_stream, str)):
                 raise ValueError(
-                    "Polling failed: 'message_id' (string) missing or invalid in initial server response."
-                )
-            if not return_stream or not isinstance(return_stream, str):
-                logger.error(
-                    f"Processor {processor_name}: Polling requested but 'return_stream' (string) not found or invalid in initial response. Response: {raw_response_json}"
-                )
-                raise ValueError(
-                    "Polling failed: 'return_stream' (string) missing or invalid in initial server response for polling."
+                    "Streaming requested but server did not return 'message_id' and 'return_stream' in response."
                 )
 
-            # Polling URL using self.orign_host for consistency
             polling_url = f"{self.orign_host}/v1/processors/{processor_namespace}/{processor_name}/return/{message_id}"
 
-            # Prepare polling payload
+            poll_payload = {"consumer_group": return_stream}
+
+            def _result_generator() -> (
+                Generator[OutputType | Dict[str, Any] | None, None, None]
+            ):
+                last_content: Any = None
+                start_ts = time.time()
+                while True:
+                    # timeout handling
+                    if timeout is not None and (time.time() - start_ts) > timeout:
+                        logger.warning(
+                            f"Processor {processor_name}: Streaming generator timed out after {timeout}s while waiting for message {message_id}."
+                        )
+                        return  # Stop generator
+
+                    try:
+                        poll_response = requests.post(
+                            polling_url,
+                            headers={"Authorization": f"Bearer {current_op_api_key}"},
+                            timeout=max(10.0, poll_interval_seconds * 2),
+                            json=poll_payload,
+                        )
+
+                        status = poll_response.status_code
+
+                        if status == 200:
+                            data_json = poll_response.json()
+                            content = data_json.get("content", data_json)
+
+                            parsed = content
+                            if (
+                                self.output_model_cls
+                                and isinstance(content, dict)
+                                and isinstance(self.output_model_cls, type)
+                            ):
+                                try:
+                                    parsed = self.output_model_cls.model_validate(
+                                        content
+                                    )
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Processor {processor_name}: Failed to parse streaming content into model – yielding raw content. Error: {e}"
+                                    )
+
+                            yield parsed  # type: ignore[yield-value]
+                            return  # Final result delivered, stop generator
+
+                        elif status in (202, 404):
+                            # 202 Processing or 404 Not ready yet – optionally yield progress
+                            try:
+                                data_json = poll_response.json()
+                                progress_content = data_json.get("content")
+                                if (
+                                    progress_content is not None
+                                    and progress_content != last_content
+                                ):
+                                    last_content = progress_content
+                                    yield progress_content  # type: ignore[yield-value]
+                            except Exception:
+                                pass
+                            time.sleep(poll_interval_seconds)
+                        else:
+                            poll_response.raise_for_status()
+                    except requests.exceptions.Timeout:
+                        logger.debug(
+                            f"Processor {processor_name}: Streaming poll timed out – retrying."
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Processor {processor_name}: Error during streaming poll: {e}"
+                        )
+                        return  # Abort generator on unrecoverable error
+
+            return _result_generator()
+        elif poll and not stream_data_wait_param:
+            # --- Traditional polling behaviour (wait for final response) ---
+            message_id = raw_response_json.get("message_id")
+            return_stream = raw_response_json.get("return_stream")
+
+            if not (isinstance(message_id, str) and isinstance(return_stream, str)):
+                logger.error(
+                    f"Processor {processor_name}: Polling requested but 'message_id' or 'return_stream' missing/invalid in initial response. Response: {raw_response_json}"
+                )
+                raise ValueError(
+                    "Polling failed: message_id or return_stream missing in server response."
+                )
+
+            polling_url = f"{self.orign_host}/v1/processors/{processor_namespace}/{processor_name}/return/{message_id}"
             poll_payload = {"consumer_group": return_stream}
 
             logger.info(
-                f"Processor {processor_name}: Polling for message_id {message_id} at {polling_url} with payload {poll_payload}. Overall timeout: {timeout}s, Interval: {poll_interval_seconds}s."
+                f"Processor {processor_name}: Starting polling loop for {message_id} every {poll_interval_seconds}s (timeout={timeout})."
             )
-            polling_start_time = time.time()
-
+            start_ts = time.time()
             while True:
-                current_time = time.time()
-                if (
-                    timeout is not None
-                    and (current_time - polling_start_time) > timeout
-                ):
-                    logger.warning(
-                        f"Processor {processor_name}: Polling for message_id {message_id} timed out after {timeout} seconds."
-                    )
+                if timeout is not None and (time.time() - start_ts) > timeout:
                     raise TimeoutError(
                         f"Polling for message_id {message_id} timed out after {timeout} seconds."
                     )
 
-                individual_poll_timeout = max(10.0, poll_interval_seconds * 2)
-                logger.info(
-                    f"Processor {processor_name}: Making polling attempt for {message_id}, attempt timeout: {individual_poll_timeout}s"
-                )
                 try:
-                    poll_response = requests.post(
+                    poll_resp = requests.post(
                         polling_url,
                         headers={"Authorization": f"Bearer {current_op_api_key}"},
-                        timeout=individual_poll_timeout,
+                        timeout=max(10.0, poll_interval_seconds * 2),
                         json=poll_payload,
                     )
 
-                    if poll_response.status_code == 200:
-                        logger.info(
-                            f"Processor {processor_name}: Successfully retrieved message {message_id} via polling. Status: 200."
-                        )
+                    status = poll_resp.status_code
+                    if status == 200:
                         try:
-                            polled_data_full = poll_response.json()
-                            if (
-                                isinstance(polled_data_full, dict)
-                                and "content" in polled_data_full
-                            ):
-                                # Extract the nested content for Pydantic validation
-                                raw_content = polled_data_full.get("content")
-                                logger.debug(
-                                    f"Processor {processor_name}: Extracted nested 'content' from polled data for {message_id}. Nested content: {str(raw_content)[:200]}..."
-                                )
-                            elif isinstance(polled_data_full, (dict, list, str)):
-                                # Fallback: use the full polled data if 'content' key is not present in a dict, or if it's not a dict itself.
-                                raw_content = polled_data_full
-                                logger.warning(
-                                    f"Processor {processor_name}: Polled data for {message_id} did not contain a 'content' key as expected, or was not a dict. Using full polled data. Type: {type(polled_data_full)}. Data: {str(polled_data_full)[:200]}..."
-                                )
-                            else:
-                                # Unexpected type for polled_data_full
-                                raw_content = polled_data_full
-                                logger.warning(
-                                    f"Processor {processor_name}: Polled data for {message_id} is of an unexpected type: {type(polled_data_full)}. Content: {str(polled_data_full)[:200]}..."
-                                )
-                        except json.JSONDecodeError:
+                            polled_json = poll_resp.json()
+                        except ValueError:
                             logger.error(
-                                f"Processor {processor_name}: Failed to decode JSON from polling response for {message_id}. Response text: {poll_response.text[:200]}..."
+                                f"Processor {processor_name}: Poll response for {message_id} not JSON. Text: {poll_resp.text[:200]}"
                             )
-                            raise ValueError(
-                                f"Polling for {message_id} returned non-JSON response with status 200."
-                            )
-                        break  # Exit polling loop
+                            raise
 
-                    elif poll_response.status_code == 404:
-                        logger.info(
-                            f"Processor {processor_name}: Message {message_id} not yet ready (404). Retrying in {poll_interval_seconds}s..."
+                        raw_content = (
+                            polled_json.get("content")
+                            if isinstance(polled_json, dict)
+                            else polled_json
                         )
-                    elif poll_response.status_code == 202:
                         logger.info(
-                            f"Processor {processor_name}: Message {message_id} processing (202). Retrying in {poll_interval_seconds}s..."
+                            f"Processor {processor_name}: Polling completed for {message_id}."
                         )
+                        break
+                    elif status in (202, 404):
+                        logger.debug(
+                            f"Processor {processor_name}: Message {message_id} not ready (status {status}). Sleeping {poll_interval_seconds}s."
+                        )
+                        time.sleep(poll_interval_seconds)
+                        continue
                     else:
-                        logger.error(
-                            f"Processor {processor_name}: Polling for message_id {message_id} received unexpected status {poll_response.status_code}. Response: {poll_response.text[:500]}"
-                        )
-                        poll_response.raise_for_status()
-
+                        poll_resp.raise_for_status()
                 except requests.exceptions.Timeout:
-                    logger.warning(
-                        f"Processor {processor_name}: Polling request for message_id {message_id} timed out. Retrying if overall timeout not exceeded..."
+                    logger.debug(
+                        f"Processor {processor_name}: Poll request timed out, retrying..."
                     )
-                except requests.exceptions.HTTPError as e:
+                except Exception as poll_err:
                     logger.error(
-                        f"Processor {processor_name}: Polling for message_id {message_id} failed with HTTPError: {e}. Response: {e.response.text[:500] if e.response else 'No response text'}"
-                    )
-                    raise
-                except requests.exceptions.RequestException as e:
-                    logger.error(
-                        f"Processor {processor_name}: Polling for message_id {message_id} failed with RequestException: {e}"
+                        f"Processor {processor_name}: Error during polling for {message_id}: {poll_err}"
                     )
                     raise
 
-                if timeout is not None and (time.time() - polling_start_time) > timeout:
-                    logger.warning(
-                        f"Processor {processor_name}: Polling for {message_id} timed out after {timeout}s (checked before sleep)."
-                    )
-                    raise TimeoutError(
-                        f"Polling for message_id {message_id} timed out after {timeout} seconds."
-                    )
-
-                time.sleep(poll_interval_seconds)
         else:
-            # Handles: wait=True (polling skipped, server waited) OR (wait=False AND poll=False) (fire-and-forget)
+            # Handles: wait=True (blocking request) OR simple fire-and-forget
             raw_content = raw_response_json.get("content")
             logger.debug(
-                f"Processor {processor_name}: Not polling. Raw content from initial response: {str(raw_content)[:200]}..."
+                f"Processor {processor_name}: No polling. Raw content from initial response: {str(raw_content)[:200]}..."
             )
 
         # --- Fetch Logs (if requested and not already running) ---

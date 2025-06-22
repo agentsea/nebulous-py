@@ -221,19 +221,49 @@ def load_or_reload_user_code(
             current_mtime,
         )
 
-    except FileNotFoundError:
+    except FileNotFoundError as e:
+        """Handle *any* FileNotFoundError raised during loading/reloading.
+
+        Historically we assumed that a FileNotFoundError inside this function
+        could only be caused by the entry-point itself going missing.  In
+        practice deep imports (e.g. the model loader trying to open HF weight
+        shards) can also raise the same exception.  That mis-classification
+        hides the real root-cause from the logs and makes debugging harder.
+
+        We now log the *actual* missing filename, the full traceback and make
+        it explicit when the missing file is NOT the entrypoint.  This gives
+        us a much clearer signal when the failure is happening in a nested
+        import or during model/asset loading.
+        """
+
+        missing_file = getattr(e, "filename", "<unknown>")
         logger.error(
-            f"[Code Loader] Error: Entrypoint file not found at '{entrypoint_abs_path}'. Cannot load/reload."
+            f"[Code Loader] FileNotFoundError encountered while loading user code: {e} (missing_file='{missing_file}')"
         )
-        # Add directory listing for debugging
+
+        # Dump full traceback so we can see exactly where the exception was
+        # raised (helps identify nested import failures)
+        logger.exception("[Code Loader] FileNotFoundError Traceback:")
+
+        # If the missing file is *not* the entrypoint, call that out
+        if missing_file and os.path.abspath(missing_file) != os.path.abspath(
+            entrypoint_abs_path
+        ):
+            logger.error(
+                f"[Code Loader] NOTE: The missing file is NOT the entrypoint. Entrypoint: '{entrypoint_abs_path}', missing: '{missing_file}'."
+            )
+
+        # For consistency still list the directory that *should* contain the
+        # entrypoint – this is often useful even for nested failures because it
+        # verifies the working directory / mount points are intact.
         dir_path = os.path.dirname(entrypoint_abs_path)
         if dir_path and os.path.isdir(dir_path):
             logger.error(f"Listing contents of directory '{dir_path}':")
             try:
                 for item in os.listdir(dir_path):
                     logger.error(f"  - {item}")
-            except OSError as e:
-                logger.error(f"    Error listing directory: {e}")
+            except OSError as e_list:
+                logger.error(f"    Error listing directory: {e_list}")
         elif dir_path:
             logger.error(f"Directory '{dir_path}' does not exist.")
         else:
@@ -1347,34 +1377,110 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
         else:
             result = target_function(input_obj)
 
+        # --- Streaming support for generator results ---
+        if isinstance(result, types.GeneratorType):
+            logger.info(
+                "[Consumer] Detected generator result – streaming chunks as they arrive."
+            )
+
+            chunk_index = 0
+            try:
+                for chunk in result:
+                    try:
+                        # Serialize chunk similar to single result handling
+                        if hasattr(chunk, "model_dump"):
+                            chunk_content = chunk.model_dump(mode="json")
+                        else:
+                            # Ensure JSON serializable
+                            try:
+                                json.dumps(chunk)
+                                chunk_content = chunk
+                            except TypeError:
+                                logger.warning(
+                                    "[Consumer] Skipping non-serializable chunk from generator."
+                                )
+                                continue  # Skip this chunk
+
+                        if return_stream:
+                            assert isinstance(return_stream, str)
+                            r.xadd(
+                                return_stream,
+                                {
+                                    "data": json.dumps(
+                                        {
+                                            "kind": "StreamChunkMessage",
+                                            "id": f"{message_id}:{chunk_index}",
+                                            "content": chunk_content,
+                                            "status": "stream",
+                                            "created_at": datetime.now(
+                                                timezone.utc
+                                            ).isoformat(),
+                                            "user_id": user_id,
+                                        }
+                                    )
+                                },
+                            )
+                            chunk_index += 1
+                    except Exception as chunk_err:
+                        logger.error(
+                            f"[Consumer] Error while processing generator chunk: {chunk_err}"
+                        )
+
+            finally:
+                # Close generator if needed
+                try:
+                    result.close()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+            # After streaming all chunks, send final success envelope (empty content)
+            if return_stream:
+                try:
+                    r.xadd(
+                        return_stream,
+                        {
+                            "data": json.dumps(
+                                {
+                                    "kind": "StreamResponseMessage",
+                                    "id": message_id,
+                                    "content": None,
+                                    "status": "success",
+                                    "created_at": datetime.now(
+                                        timezone.utc
+                                    ).isoformat(),
+                                    "user_id": user_id,
+                                }
+                            )
+                        },
+                    )
+                except Exception as final_err:
+                    logger.error(
+                        f"[Consumer] Failed to send final stream completion message: {final_err}"
+                    )
+
+            # Acknowledge original message and exit early – already streamed
+            assert isinstance(REDIS_STREAM, str)
+            assert isinstance(REDIS_CONSUMER_GROUP, str)
+            r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
+            return
+
+        # --- Non-generator result handling (existing logic) ---
+
         result_content = None  # Default to None
-        if result is not None:  # Only process if there's a result
+        if result is not None:
             try:
                 if hasattr(result, "model_dump"):
-                    logger.debug("[Consumer] Result has model_dump, using it.")
-                    # Use 'json' mode to ensure serializability where possible
                     result_content = result.model_dump(mode="json")
-                    # logger.debug(f"[Consumer] Result after model_dump: {result_content}") # Debugging
                 else:
-                    # Try standard json.dumps as a fallback to check serializability
-                    logger.debug(
-                        "[Consumer] Result has no model_dump, attempting json.dumps check."
-                    )
                     try:
-                        # Test if it's serializable
                         json.dumps(result)
-                        # If the above line doesn't raise TypeError, assign the original result
                         result_content = result
-                        # logger.debug(f"[Consumer] Result assigned directly after json.dumps check passed: {result_content}") # Debugging
                     except TypeError as e:
                         logger.warning(
                             f"[Consumer] Warning: Result is not JSON serializable: {e}. Discarding result."
                         )
-                        result_content = None  # Explicitly set to None on failure
-
-            except (
-                Exception
-            ) as e:  # Catch other potential model_dump errors or unexpected issues
+                        result_content = None
+            except Exception as e:
                 logger.warning(
                     f"[Consumer] Warning: Unexpected error during result processing/serialization: {e}. Discarding result."
                 )

@@ -392,6 +392,7 @@ def processor(
     proxy_port: Optional[int] = None,
     health_check: Optional[V1ContainerHealthCheck] = None,
     execution_mode: str = "inline",
+    stream: bool = False,
     config: Optional[GlobalConfig] = None,
     hot_reload: bool = True,
     debug: bool = False,
@@ -431,6 +432,7 @@ def processor(
         proxy_port: Proxy port configuration
         health_check: Container health check configuration
         execution_mode: Execution mode ("inline" or "subprocess")
+        stream: Boolean flag to enable generator semantics
         config: Global configuration override
         hot_reload: Enable/disable hot code reloading (default: True)
         debug: Enable debug mode
@@ -1349,6 +1351,15 @@ def processor(
         #     logger.warning(
         #         "Could not assign original_func to Processor instance. Update Processor model or remove assignment."
         #     )
+
+        # Store the stream flag so the Processor instance knows to operate in generator mode by default
+        try:
+            setattr(_processor_instance, "_stream_enabled", stream)
+        except Exception:
+            # If for some reason setattr fails, log but do not break creation
+            logger.warning(
+                "Failed to set _stream_enabled attribute on Processor instance – streaming may not work as expected."
+            )
 
         return processor_instance
 
