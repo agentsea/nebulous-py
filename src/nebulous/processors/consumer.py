@@ -1401,7 +1401,6 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
 
             chunk_index = 0
             try:
-                # Convert async generator to list first if needed
                 if is_async_generator:
                     # For async generators, we need to iterate directly and stream each chunk
                     async def process_async_generator():
@@ -1450,11 +1449,8 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                     # Run the async generator processing
                     asyncio.run(process_async_generator())
                 else:
-                    # For regular generators, collect chunks first then process
-                    chunks = list(result)  # type: ignore[misc]
-
-                    # Process all chunks for regular generators
-                    for chunk in chunks:  # type: ignore[misc]
+                    # For regular generators, stream each chunk as it's yielded
+                    for chunk in result:  # type: ignore[misc]
                         try:
                             # Serialize chunk similar to single result handling
                             if hasattr(chunk, "model_dump"):  # type: ignore[misc]
