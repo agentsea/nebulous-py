@@ -1,4 +1,4 @@
-from examples.async_test.sub.test_processor import (
+from sub.test_processor import (
     Input,
     my_async_generator_processor,
     my_async_processor,

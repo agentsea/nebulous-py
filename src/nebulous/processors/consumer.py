@@ -1403,18 +1403,56 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             try:
                 # Convert async generator to list first if needed
                 if is_async_generator:
-
-                    async def collect_async_chunks():
-                        chunks = []
+                    # For async generators, we need to iterate directly and stream each chunk
+                    async def process_async_generator():
+                        nonlocal chunk_index
                         async for chunk in result:  # type: ignore[misc]
-                            chunks.append(chunk)
-                        return chunks
+                            try:
+                                # Serialize chunk similar to single result handling
+                                if hasattr(chunk, "model_dump"):  # type: ignore[misc]
+                                    chunk_content = chunk.model_dump(mode="json")  # type: ignore[misc]
+                                else:
+                                    # Ensure JSON serializable
+                                    try:
+                                        json.dumps(chunk)
+                                        chunk_content = chunk
+                                    except TypeError:
+                                        logger.warning(
+                                            "[Consumer] Skipping non-serializable chunk from async generator."
+                                        )
+                                        continue  # Skip this chunk
 
-                    chunks = asyncio.run(collect_async_chunks())
+                                if return_stream:
+                                    assert isinstance(return_stream, str)
+                                    r.xadd(
+                                        return_stream,
+                                        {
+                                            "data": json.dumps(
+                                                {
+                                                    "kind": "StreamChunkMessage",
+                                                    "id": f"{message_id}:{chunk_index}",
+                                                    "content": chunk_content,
+                                                    "status": "stream",
+                                                    "created_at": datetime.now(
+                                                        timezone.utc
+                                                    ).isoformat(),
+                                                    "user_id": user_id,
+                                                }
+                                            )
+                                        },
+                                    )
+                                    chunk_index += 1
+                            except Exception as chunk_err:
+                                logger.error(
+                                    f"[Consumer] Error while processing async generator chunk: {chunk_err}"
+                                )
+
+                    # Run the async generator processing
+                    asyncio.run(process_async_generator())
                 else:
                     chunks = list(result)  # type: ignore[misc]
 
-                # Process all chunks
+                # Process all chunks for regular generators
                 for chunk in chunks:  # type: ignore[misc]
                     try:
                         # Serialize chunk similar to single result handling
