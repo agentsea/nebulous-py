@@ -16,13 +16,16 @@ class Output(BaseModel):
     response: str
 
 
+VERSION = "v5"
+
+
 # This mimics your setup: an async processor in a subdirectory.
 # The decorator will run when this module is imported.
 @processor(
     image="python:3.11",
-    name="async-test-processor-3",
     accelerators=["1:L40S"],
     wait_for_healthy=True,
+    name=f"async-test-processor-{VERSION}",
 )
 async def my_async_processor(msg: Message[Input]) -> Output:
     """A simple async processor for testing."""
@@ -38,10 +41,10 @@ async def my_async_processor(msg: Message[Input]) -> Output:
 
 @processor(
     image="python:3.11",
-    name="async-test-generator-processor",
+    name=f"async-test-generator-processor-{VERSION}",
     accelerators=["1:L40S"],
     wait_for_healthy=True,
-    stream=True,  # enables generator semantics by default
+    stream=True,
 )
 def my_generator_processor(msg: Message[Input]) -> Output:  # type: ignore[misc]
     """Simple generator processor that yields three chunks."""
@@ -53,10 +56,10 @@ def my_generator_processor(msg: Message[Input]) -> Output:  # type: ignore[misc]
 # --- Async generator processor to test async streaming ---
 @processor(
     image="python:3.11",
-    name="async-test-async-generator-processor",
+    name=f"async-test-async-generator-processor-{VERSION}",
     accelerators=["1:L40S"],
     wait_for_healthy=True,
-    stream=True,  # enables generator semantics by default
+    stream=True,
 )
 async def my_async_generator_processor(msg: Message[Input]) -> Output:  # type: ignore[misc]
     """Simple async generator processor that yields three chunks."""
