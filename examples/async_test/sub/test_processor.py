@@ -7,6 +7,8 @@ from nebulous.processors.models import Message
 
 print("__name__", __name__)
 
+VERSION = "v7"
+
 
 class Input(BaseModel):
     greeting: str
@@ -14,9 +16,6 @@ class Input(BaseModel):
 
 class Output(BaseModel):
     response: str
-
-
-VERSION = "v5"
 
 
 # This mimics your setup: an async processor in a subdirectory.

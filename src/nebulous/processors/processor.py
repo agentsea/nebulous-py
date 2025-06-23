@@ -397,7 +397,9 @@ class Processor(Generic[InputType, OutputType]):
             ):
                 last_content: Any = None
                 start_ts = time.time()
-                while True:
+                received_final = False
+
+                while not received_final:
                     # timeout handling
                     if timeout is not None and (time.time() - start_ts) > timeout:
                         logger.warning(
@@ -419,23 +421,60 @@ class Processor(Generic[InputType, OutputType]):
                             data_json = poll_response.json()
                             content = data_json.get("content", data_json)
 
-                            parsed = content
-                            if (
-                                self.output_model_cls
-                                and isinstance(content, dict)
-                                and isinstance(self.output_model_cls, type)
-                            ):
-                                try:
-                                    parsed = self.output_model_cls.model_validate(
-                                        content
-                                    )
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Processor {processor_name}: Failed to parse streaming content into model – yielding raw content. Error: {e}"
-                                    )
+                            # Check if this is a final completion message or a chunk
+                            message_kind = data_json.get("kind", "")
+                            message_status = data_json.get("status", "")
 
-                            yield parsed  # type: ignore[yield-value]
-                            return  # Final result delivered, stop generator
+                            if (
+                                message_kind == "StreamResponseMessage"
+                                and message_status == "success"
+                            ):
+                                # This is the final completion message
+                                received_final = True
+                                # Final completion message - don't yield anything, just complete
+                                return  # Final completion message received
+                            elif message_kind == "StreamChunkMessage":
+                                # This is a streaming chunk
+                                if content is not None and content != last_content:
+                                    last_content = content
+                                    parsed = content
+                                    if (
+                                        self.output_model_cls
+                                        and isinstance(content, dict)
+                                        and isinstance(self.output_model_cls, type)
+                                    ):
+                                        try:
+                                            parsed = (
+                                                self.output_model_cls.model_validate(
+                                                    content
+                                                )
+                                            )
+                                        except Exception as e:
+                                            logger.warning(
+                                                f"Processor {processor_name}: Failed to parse streaming chunk into model – yielding raw content. Error: {e}"
+                                            )
+                                    yield parsed  # type: ignore[yield-value]
+                                # Continue polling for more chunks
+                                time.sleep(poll_interval_seconds)
+                            else:
+                                # Legacy: treat any 200 response as final result
+                                parsed = content
+                                if (
+                                    self.output_model_cls
+                                    and isinstance(content, dict)
+                                    and isinstance(self.output_model_cls, type)
+                                ):
+                                    try:
+                                        parsed = self.output_model_cls.model_validate(
+                                            content
+                                        )
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"Processor {processor_name}: Failed to parse streaming content into model – yielding raw content. Error: {e}"
+                                        )
+
+                                yield parsed  # type: ignore[yield-value]
+                                return  # Final result delivered, stop generator
 
                         elif status in (202, 404):
                             # 202 Processing or 404 Not ready yet – optionally yield progress
