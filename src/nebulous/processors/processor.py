@@ -416,14 +416,23 @@ class Processor(Generic[InputType, OutputType]):
                         )
 
                         status = poll_response.status_code
+                        logger.info(
+                            f"Processor {processor_name}: Streaming poll response status: {status}"
+                        )
 
                         if status == 200:
                             data_json = poll_response.json()
                             content = data_json.get("content", data_json)
+                            logger.info(
+                                f"Processor {processor_name}: Received 200 response with content: {str(content)[:200]}"
+                            )
 
                             # Check if this is a final completion message or a chunk
                             message_kind = data_json.get("kind", "")
                             message_status = data_json.get("status", "")
+                            logger.info(
+                                f"Processor {processor_name}: Message kind='{message_kind}', status='{message_status}'"
+                            )
 
                             if (
                                 message_kind == "StreamResponseMessage"
@@ -431,10 +440,16 @@ class Processor(Generic[InputType, OutputType]):
                             ):
                                 # This is the final completion message
                                 received_final = True
+                                logger.info(
+                                    f"Processor {processor_name}: Received final completion message, stopping generator"
+                                )
                                 # Final completion message - don't yield anything, just complete
                                 return  # Final completion message received
                             elif message_kind == "StreamChunkMessage":
                                 # This is a streaming chunk
+                                logger.info(
+                                    f"Processor {processor_name}: Processing streaming chunk"
+                                )
                                 if content is not None and content != last_content:
                                     last_content = content
                                     parsed = content
@@ -453,11 +468,24 @@ class Processor(Generic[InputType, OutputType]):
                                             logger.warning(
                                                 f"Processor {processor_name}: Failed to parse streaming chunk into model – yielding raw content. Error: {e}"
                                             )
+                                    logger.info(
+                                        f"Processor {processor_name}: Yielding chunk: {str(parsed)[:100]}"
+                                    )
                                     yield parsed  # type: ignore[yield-value]
+                                else:
+                                    logger.info(
+                                        f"Processor {processor_name}: Skipping duplicate chunk"
+                                    )
                                 # Continue polling for more chunks
+                                logger.info(
+                                    f"Processor {processor_name}: Sleeping {poll_interval_seconds}s before next poll"
+                                )
                                 time.sleep(poll_interval_seconds)
                             else:
                                 # Legacy: treat any 200 response as final result
+                                logger.info(
+                                    f"Processor {processor_name}: Legacy final result handling"
+                                )
                                 parsed = content
                                 if (
                                     self.output_model_cls
@@ -477,6 +505,9 @@ class Processor(Generic[InputType, OutputType]):
                                 return  # Final result delivered, stop generator
 
                         elif status in (202, 404):
+                            logger.info(
+                                f"Processor {processor_name}: Received {status} status, continuing to poll"
+                            )
                             # 202 Processing or 404 Not ready yet – optionally yield progress
                             try:
                                 data_json = poll_response.json()
@@ -486,11 +517,17 @@ class Processor(Generic[InputType, OutputType]):
                                     and progress_content != last_content
                                 ):
                                     last_content = progress_content
+                                    logger.info(
+                                        f"Processor {processor_name}: Yielding progress: {str(progress_content)[:100]}"
+                                    )
                                     yield progress_content  # type: ignore[yield-value]
                             except Exception:
                                 pass
                             time.sleep(poll_interval_seconds)
                         else:
+                            logger.error(
+                                f"Processor {processor_name}: Unexpected status code {status}"
+                            )
                             poll_response.raise_for_status()
                     except requests.exceptions.Timeout:
                         logger.debug(

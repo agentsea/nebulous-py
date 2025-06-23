@@ -7,7 +7,7 @@ from nebulous.processors.models import Message
 
 print("__name__", __name__)
 
-VERSION = "v7"
+VERSION = "v9"
 
 
 class Input(BaseModel):
