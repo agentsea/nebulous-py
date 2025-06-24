@@ -1398,23 +1398,42 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
             logger.info(
                 f"[Consumer] Detected {'async ' if is_async_generator else ''}generator result – streaming chunks as they arrive."
             )
+            logger.info(f"[Consumer] return_stream: {return_stream}")
+            logger.info(f"[Consumer] message_id: {message_id}")
+            logger.info(f"[Consumer] user_id: {user_id}")
 
             chunk_index = 0
             try:
                 if is_async_generator:
                     # For async generators, we need to iterate directly and stream each chunk
+                    logger.info(
+                        f"[Consumer] Processing async generator for message {message_id}"
+                    )
+
                     async def process_async_generator():
                         nonlocal chunk_index
+                        logger.info(
+                            f"[Consumer] Starting async generator iteration for message {message_id}"
+                        )
                         async for chunk in result:  # type: ignore[misc]
+                            logger.info(
+                                f"[Consumer] Async generator yielded chunk {chunk_index}: {chunk}"
+                            )
                             try:
                                 # Serialize chunk similar to single result handling
                                 if hasattr(chunk, "model_dump"):  # type: ignore[misc]
                                     chunk_content = chunk.model_dump(mode="json")  # type: ignore[misc]
+                                    logger.info(
+                                        f"[Consumer] Async chunk {chunk_index} serialized via model_dump: {chunk_content}"
+                                    )
                                 else:
                                     # Ensure JSON serializable
                                     try:
                                         json.dumps(chunk)
                                         chunk_content = chunk
+                                        logger.info(
+                                            f"[Consumer] Async chunk {chunk_index} serialized as JSON: {chunk_content}"
+                                        )
                                     except TypeError:
                                         logger.warning(
                                             "[Consumer] Skipping non-serializable chunk from async generator."
@@ -1423,6 +1442,19 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
 
                                 if return_stream:
                                     assert isinstance(return_stream, str)
+                                    chunk_message = {
+                                        "kind": "StreamChunkMessage",
+                                        "id": f"{message_id}:{chunk_index}",
+                                        "content": chunk_content,
+                                        "status": "stream",
+                                        "created_at": datetime.now(
+                                            timezone.utc
+                                        ).isoformat(),
+                                        "user_id": user_id,
+                                    }
+                                    logger.info(
+                                        f"[Consumer] Sending async chunk {chunk_index} message: {chunk_message}"
+                                    )
                                     r.xadd(
                                         return_stream,
                                         {
@@ -1440,68 +1472,128 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                                             )
                                         },
                                     )
+                                    logger.info(
+                                        f"[Consumer] Successfully sent async chunk {chunk_index} to stream {return_stream}"
+                                    )
                                     chunk_index += 1
+                                else:
+                                    logger.warning(
+                                        f"[Consumer] No return_stream for async chunk {chunk_index}, skipping"
+                                    )
                             except Exception as chunk_err:
                                 logger.error(
                                     f"[Consumer] Error while processing async generator chunk: {chunk_err}"
                                 )
+                                logger.exception(
+                                    f"[Consumer] Async chunk {chunk_index} processing error traceback:"
+                                )
+                        logger.info(
+                            f"[Consumer] Async generator iteration completed for message {message_id}. Total chunks: {chunk_index}"
+                        )
 
                     # Run the async generator processing
+                    logger.info(
+                        f"[Consumer] Running async generator processing for message {message_id}"
+                    )
                     asyncio.run(process_async_generator())
+                    logger.info(
+                        f"[Consumer] Async generator processing completed for message {message_id}"
+                    )
                 else:
                     # For regular generators, stream each chunk as it's yielded
                     logger.info(
                         f"[Consumer] Starting to iterate over regular generator for message {message_id}"
                     )
-                    for chunk in result:  # type: ignore[misc]
-                        logger.info(
-                            f"[Consumer] Processing chunk {chunk_index} from generator"
-                        )
-                        try:
-                            # Serialize chunk similar to single result handling
-                            if hasattr(chunk, "model_dump"):  # type: ignore[misc]
-                                chunk_content = chunk.model_dump(mode="json")  # type: ignore[misc]
-                            else:
-                                # Ensure JSON serializable
-                                try:
-                                    json.dumps(chunk)
-                                    chunk_content = chunk
-                                except TypeError:
-                                    logger.warning(
-                                        "[Consumer] Skipping non-serializable chunk from generator."
-                                    )
-                                    continue  # Skip this chunk
-
-                            if return_stream:
-                                assert isinstance(return_stream, str)
-                                logger.info(
-                                    f"[Consumer] Sending chunk {chunk_index} to stream: {chunk_content}"
-                                )
-                                r.xadd(
-                                    return_stream,
-                                    {
-                                        "data": json.dumps(
-                                            {
-                                                "kind": "StreamChunkMessage",
-                                                "id": f"{message_id}:{chunk_index}",
-                                                "content": chunk_content,
-                                                "status": "stream",
-                                                "created_at": datetime.now(
-                                                    timezone.utc
-                                                ).isoformat(),
-                                                "user_id": user_id,
-                                            }
-                                        )
-                                    },
-                                )
-                                chunk_index += 1
+                    try:
+                        for chunk in result:  # type: ignore[misc]
                             logger.info(
-                                f"[Consumer] Finished processing chunk {chunk_index - 1}"
+                                f"[Consumer] Processing chunk {chunk_index} from generator"
                             )
-                        except Exception as chunk_err:
-                            logger.error(
-                                f"[Consumer] Error while processing generator chunk: {chunk_err}"
+                            logger.info(
+                                f"[Consumer] Generator yielded chunk {chunk_index}: {chunk}"
                             )
+                            try:
+                                # Serialize chunk similar to single result handling
+                                if hasattr(chunk, "model_dump"):  # type: ignore[misc]
+                                    chunk_content = chunk.model_dump(mode="json")  # type: ignore[misc]
+                                    logger.info(
+                                        f"[Consumer] Chunk {chunk_index} serialized via model_dump: {chunk_content}"
+                                    )
+                                else:
+                                    # Ensure JSON serializable
+                                    try:
+                                        json.dumps(chunk)
+                                        chunk_content = chunk
+                                        logger.info(
+                                            f"[Consumer] Chunk {chunk_index} serialized as JSON: {chunk_content}"
+                                        )
+                                    except TypeError:
+                                        logger.warning(
+                                            "[Consumer] Skipping non-serializable chunk from generator."
+                                        )
+                                        continue  # Skip this chunk
+
+                                if return_stream:
+                                    assert isinstance(return_stream, str)
+                                    logger.info(
+                                        f"[Consumer] Sending chunk {chunk_index} to stream: {chunk_content}"
+                                    )
+                                    chunk_message = {
+                                        "kind": "StreamChunkMessage",
+                                        "id": f"{message_id}:{chunk_index}",
+                                        "content": chunk_content,
+                                        "status": "stream",
+                                        "created_at": datetime.now(
+                                            timezone.utc
+                                        ).isoformat(),
+                                        "user_id": user_id,
+                                    }
+                                    logger.info(
+                                        f"[Consumer] Chunk {chunk_index} message data: {chunk_message}"
+                                    )
+                                    r.xadd(
+                                        return_stream,
+                                        {
+                                            "data": json.dumps(
+                                                {
+                                                    "kind": "StreamChunkMessage",
+                                                    "id": f"{message_id}:{chunk_index}",
+                                                    "content": chunk_content,
+                                                    "status": "stream",
+                                                    "created_at": datetime.now(
+                                                        timezone.utc
+                                                    ).isoformat(),
+                                                    "user_id": user_id,
+                                                }
+                                            )
+                                        },
+                                    )
+                                    logger.info(
+                                        f"[Consumer] Successfully sent chunk {chunk_index} to stream {return_stream}"
+                                    )
+                                    chunk_index += 1
+                                else:
+                                    logger.warning(
+                                        f"[Consumer] No return_stream for chunk {chunk_index}, skipping"
+                                    )
+                                logger.info(
+                                    f"[Consumer] Finished processing chunk {chunk_index - 1}"
+                                )
+                            except Exception as chunk_err:
+                                logger.error(
+                                    f"[Consumer] Error while processing generator chunk: {chunk_err}"
+                                )
+                                logger.exception(
+                                    f"[Consumer] Chunk {chunk_index} processing error traceback:"
+                                )
+                    except Exception as gen_err:
+                        logger.error(
+                            f"[Consumer] Error during generator iteration: {gen_err}"
+                        )
+                        logger.exception(
+                            f"[Consumer] Generator iteration error traceback:"
+                        )
+                        raise  # Re-raise to be caught by outer exception handler
                     logger.info(
                         f"[Consumer] Generator iteration completed. Total chunks processed: {chunk_index}"
                     )
@@ -1515,6 +1607,9 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
 
             # After streaming all chunks, send final success envelope (empty content)
             if return_stream:
+                logger.info(
+                    f"[Consumer] Sending final completion message for message {message_id}"
+                )
                 try:
                     r.xadd(
                         return_stream,
@@ -1533,15 +1628,31 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                             )
                         },
                     )
+                    logger.info(
+                        f"[Consumer] Successfully sent final completion message for message {message_id}"
+                    )
                 except Exception as final_err:
                     logger.error(
                         f"[Consumer] Failed to send final stream completion message: {final_err}"
                     )
 
             # Acknowledge original message and exit early – already streamed
+            logger.info(f"[Consumer] About to acknowledge message {message_id}")
             assert isinstance(REDIS_STREAM, str)
             assert isinstance(REDIS_CONSUMER_GROUP, str)
-            r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
+            try:
+                r.xack(REDIS_STREAM, REDIS_CONSUMER_GROUP, message_id)
+                logger.info(
+                    f"[Consumer] Successfully acknowledged message {message_id}"
+                )
+            except Exception as ack_err:
+                logger.error(
+                    f"[Consumer] Failed to acknowledge message {message_id}: {ack_err}"
+                )
+                logger.exception(f"[Consumer] Message acknowledgment error traceback:")
+            logger.info(
+                f"[Consumer] Exiting generator processing for message {message_id}"
+            )
             return
 
         # --- Non-generator result handling (existing logic) ---
