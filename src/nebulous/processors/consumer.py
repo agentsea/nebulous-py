@@ -1450,7 +1450,13 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                     asyncio.run(process_async_generator())
                 else:
                     # For regular generators, stream each chunk as it's yielded
+                    logger.info(
+                        f"[Consumer] Starting to iterate over regular generator for message {message_id}"
+                    )
                     for chunk in result:  # type: ignore[misc]
+                        logger.info(
+                            f"[Consumer] Processing chunk {chunk_index} from generator"
+                        )
                         try:
                             # Serialize chunk similar to single result handling
                             if hasattr(chunk, "model_dump"):  # type: ignore[misc]
@@ -1468,6 +1474,9 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
 
                             if return_stream:
                                 assert isinstance(return_stream, str)
+                                logger.info(
+                                    f"[Consumer] Sending chunk {chunk_index} to stream: {chunk_content}"
+                                )
                                 r.xadd(
                                     return_stream,
                                     {
@@ -1486,10 +1495,16 @@ def process_message(message_id: str, message_data: Dict[str, str]) -> None:
                                     },
                                 )
                                 chunk_index += 1
+                            logger.info(
+                                f"[Consumer] Finished processing chunk {chunk_index - 1}"
+                            )
                         except Exception as chunk_err:
                             logger.error(
                                 f"[Consumer] Error while processing generator chunk: {chunk_err}"
                             )
+                    logger.info(
+                        f"[Consumer] Generator iteration completed. Total chunks processed: {chunk_index}"
+                    )
 
             finally:
                 # Close generator if needed
