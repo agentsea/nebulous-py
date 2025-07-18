@@ -476,11 +476,11 @@ class Processor(Generic[InputType, OutputType]):
                                     logger.info(
                                         f"Processor {processor_name}: Skipping duplicate chunk"
                                     )
-                                # Continue polling for more chunks
+                                # For streaming chunks, poll immediately for the next chunk
+                                # to avoid missing rapidly sent chunks
                                 logger.info(
-                                    f"Processor {processor_name}: Sleeping {poll_interval_seconds}s before next poll"
+                                    f"Processor {processor_name}: Continuing to poll immediately for next chunk"
                                 )
-                                time.sleep(poll_interval_seconds)
                             else:
                                 # Legacy: treat any 200 response as final result
                                 logger.info(
