@@ -1170,7 +1170,7 @@ class RcloneBucket(StorageBucket):
         rc_args = [
             "--modify-window=2s",
             "--log-level=DEBUG" if self.verbose else "--log-level=INFO",
-            "--log-format=date,time,level,message",
+            # "--log-format=date,time,level,message",
             # "--progress",  # Add progress display
         ]
         if dry_run:
@@ -1285,7 +1285,7 @@ class RcloneBucket(StorageBucket):
 
         rc_args = [
             "--log-level=DEBUG" if self.verbose else "--log-level=INFO",
-            "--log-format=date,time,level,message",
+            # "--log-format=date,time,level,message",
             # "--progress",  # Add progress display
         ]
 
